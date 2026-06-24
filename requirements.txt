@@ -1,0 +1,22 @@
+# SecureFace-RX + SCRFD-ARC 통합 시스템
+
+# 얼굴 탐지 + 인식 (SCRFD / ArcFace)
+insightface>=0.7.3
+onnxruntime>=1.16.0       # CPU 추론 (GPU: onnxruntime-gpu)
+
+# INN 익명화 (PRO-Face S)
+torch>=2.0.0
+torchvision>=0.15.0
+
+# 이미지 처리
+opencv-python>=4.8.0
+Pillow>=10.0.0
+numpy>=1.24.0
+scipy>=1.10.0
+
+# 웹 서버 (등록 UI)
+fastapi>=0.100.0
+uvicorn>=0.23.0
+jinja2>=3.1.0
+python-multipart>=0.0.6
+pydantic>=2.0.0

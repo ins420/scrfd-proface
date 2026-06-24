@@ -3,8 +3,19 @@ from PIL import ImageFont, ImageDraw, Image
 import numpy as np
 import sqlite3
 import io
+import os
 from insightface.app import FaceAnalysis
 from insightface.utils import face_align
+
+import config as c
+from core.anonymizer import INNAnonymizer
+
+_FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",   # Ubuntu
+    "C:/Windows/Fonts/NanumGothic.ttf",                   # Windows (나눔고딕 설치 시)
+    "C:/Windows/Fonts/malgun.ttf",                         # Windows 기본 맑은 고딕
+    "C:/Windows/Fonts/gulim.ttc",                          # Windows 기본 굴림
+]
 
 # ==========================================
 # 1. DB 연동 및 Numpy 어댑터
@@ -41,19 +52,20 @@ def cosine_similarity(vec1, vec2):
 # ---------------------------------------------------------
 # ✨ 한글 출력 전용 함수 (여기를 복사해서 코드 윗부분에 붙여넣으세요)
 # ---------------------------------------------------------
+def _load_font(size):
+    for path in _FONT_CANDIDATES:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+    return ImageFont.load_default()
+
 def put_korean_text(img, text, position, font_size, color):
-    # BGR 색상을 RGB로 변환하여 Pillow에 맞춤
     b, g, r = color
     img_pil = Image.fromarray(img)
     draw = ImageDraw.Draw(img_pil)
-    
-    try:
-        # 우분투에 설치된 나눔고딕 폰트 경로
-        font = ImageFont.truetype("/usr/share/fonts/truetype/nanum/NanumGothic.ttf", font_size)
-    except:
-        # 폰트가 없을 경우 기본 폰트 사용 (영문만 나옴)
-        font = ImageFont.load_default()
-        
+    font = _load_font(font_size)
     draw.text(position, text, font=font, fill=(b, g, r))
     return np.array(img_pil)
 
@@ -90,13 +102,16 @@ def run_security_camera():
     db_users = load_registered_users()
     print(f"✅ DB에서 {len(db_users)}개의 등록된 얼굴 데이터를 불러왔습니다.")
 
-    cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+    # INN 익명화 모듈 초기화
+    anonymizer = INNAnonymizer(checkpoint_path=c.INN_CHECKPOINT)
+    PASSWORD = c.DEMO_PASSWORD
+
+    cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-    # 💡 임계값 설정 (0.45 ~ 0.5 사이 추천. 높을수록 깐깐해짐)
-    MATCH_THRESHOLD = 0.45 
+    MATCH_THRESHOLD = c.MATCH_THRESHOLD
 
     while cap.isOpened():
         success, frame = cap.read()
@@ -129,7 +144,11 @@ def run_security_camera():
                                 best_name = db_name
                                 best_group = db_group
 
-                # 3. 그룹별 색상 및 표식 매핑
+                # 3. Unknown 외부인 → INN 익명화 적용 (박스 그리기 전에)
+                if best_name == "Unknown":
+                    frame, _, _ = anonymizer.protect_roi(frame, [x1, y1, x2, y2], PASSWORD)
+
+                # 4. 그룹별 색상 및 표식 매핑
                 if best_group == "허가":
                     color = (0, 255, 0)
                     marker_func = draw_green_circle
@@ -140,26 +159,20 @@ def run_security_camera():
                     color = (0, 0, 255)
                     marker_func = draw_red_x
 
-                # 4. 시각화 (좌측 상단 고정 및 conf 표기)
+                # 5. 시각화
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                
-                # 좌측 상단 위치 계산 (화면 위로 넘어가지 않게 방어 로직)
-                ui_y = max(y1 - 10, 20) 
+
+                ui_y = max(y1 - 10, 20)
                 marker_center = (x1 + 10, ui_y - 4)
                 text_start_x = x1 + 25
-                
+
                 marker_func(frame, marker_center)
-                
-                # ==========================================
-                # 5. 결과 텍스트 생성 및 한글 출력 (여기가 핵심!)
-                # ==========================================
-                # 위에서 찾은 best_name과 max_sim을 그대로 사용합니다.
+
                 if best_name == "Unknown":
-                    display_text = f"알 수 없음 ({max_sim:.2f})"
+                    display_text = f"외부인 ({max_sim:.2f})"
                 else:
                     display_text = f"{best_name} ({max_sim:.2f})"
 
-                # ⭐️ 들여쓰기 주의: for문 안쪽에 정확히 맞춰서 텍스트를 그립니다.
                 frame = put_korean_text(frame, display_text, (text_start_x, ui_y - 15), 20, color)
 
         # (for문 종료)

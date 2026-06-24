@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+
+# 가상환경
+venv/
+env/
+.venv/
+
+# 모델 가중치 (대용량)
+*.onnx
+*.pt
+*.pth
+checkpoints/
+
+# 등록 얼굴 이미지 (개인 생체정보)
+registered_faces/
+
+# 데이터베이스
+*.db
+*.sqlite3
+
+# 디버그/임시 파일
+debug_*.jpg
+debug_*.png
+
+# 환경변수
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
