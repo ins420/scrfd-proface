@@ -43,6 +43,8 @@ def pick_providers():
 def main():
     video_path = sys.argv[1] if len(sys.argv) > 1 else "demo.mp4"
     frame_skip = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+    # 처리할 최대 프레임 수 (0이면 전체). 검증용으로 일부만 처리할 때.
+    max_frames = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -125,6 +127,9 @@ def main():
         w_comp.write(np.hstack([o, a, r]))
 
         processed += 1
+        if max_frames and processed >= max_frames:
+            print(f"[Batch] max_frames={max_frames} 도달 → 중단")
+            break
         if processed % 10 == 0:
             elapsed = time.time() - t_start
             spd = processed / elapsed
