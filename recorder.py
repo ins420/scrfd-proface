@@ -96,6 +96,9 @@ class PSFRecorder:
             snap = self._camera.get_recording_snapshot()
             if snap is None:
                 continue
+            # 익명화된 얼굴(외부인)이 있을 때만 저장
+            if not snap.get("tiles"):
+                continue
 
             chunk = self._chunk_dir()
             frame_id += 1

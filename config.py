@@ -76,7 +76,7 @@ DEMO_PASSWORD = "forensic2026"
 # INN 가중치 경로 (None이면 랜덤 초기화 — 형태 확인용)
 # 실제 가중치가 있으면 아래 경로 지정:
 # INN_CHECKPOINT = "checkpoints/hybridAll_inv3_...pth"
-INN_CHECKPOINT = None
+INN_CHECKPOINT = f"checkpoints/{CHECKPOINT_ID}.pth"
 
 # ArcFace 코사인 유사도 임계값
 MATCH_THRESHOLD = 0.45
@@ -84,3 +84,8 @@ MATCH_THRESHOLD = 0.45
 # 카메라 장치 이름 (None이면 정수 인덱스 자동 탐색)
 # Windows DSHOW: "video=<장치이름>" 형식으로 열림
 CAMERA_DEVICE_NAME = "Logi C310 HD WebCam"
+
+# 카메라 실패 시 폴백 동영상 (mp4 등). None이면 "Reconnecting" 재시도.
+# 실제 카메라가 안 될 때 이 영상으로 데모/녹화/복원 파이프라인을 그대로 시연.
+VIDEO_FALLBACK = "demo.mp4"
+VIDEO_FALLBACK_FPS = 25   # 재생 속도 (원본 영상 fps에 맞춤)

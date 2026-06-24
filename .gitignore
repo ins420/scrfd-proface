@@ -25,6 +25,14 @@ registered_faces/
 # 디버그/임시 파일
 debug_*.jpg
 debug_*.png
+diag_*.jpg
+test_restore_result.jpg
+
+# 영상 (대용량 — 코랩엔 직접 업로드)
+*.mp4
+
+# 녹화 청크
+recordings/
 
 # 환경변수
 .env

@@ -188,57 +188,34 @@ class CameraProcessor:
         t.start()
         return q
 
-    @staticmethod
-    def _probe(cap, n: int = 20, timeout: float = 5.0) -> bool:
-        """
-        별도 스레드에서 최대 n 프레임 읽기. 평균 밝기>5인 프레임이
-        하나라도 나오면 True. timeout 초 내 응답 없으면 False.
-        MSMF 무한 블로킹 방지용.
-        """
-        import queue as _q, threading as _t
-        result: "_q.Queue[bool]" = _q.Queue(1)
-
-        def _r():
-            found = False
-            for _ in range(n):
-                try:
-                    ret, f = cap.read()
-                    if ret and f is not None and float(f.mean()) > 5:
-                        found = True
-                        break
-                except Exception:
-                    break
-            result.put(found)
-
-        _t.Thread(target=_r, daemon=True).start()
-        try:
-            return result.get(timeout=timeout)
-        except _q.Empty:
-            return False
-
     def _loop(self, cam_id: int):
         import time
         import queue as _queue
 
-        def _setup(cap_obj):
-            # MJPG 먼저 설정 — Logitech 등 일부 웹캠은 기본 YUY2로 열리면 검은 프레임 반환
-            cap_obj.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        def _setup(cap_obj, force_mjpg: bool = False):
+            if force_mjpg:
+                cap_obj.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
             cap_obj.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             cap_obj.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            cap_obj.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            cap_obj.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
+            cap_obj.set(cv2.CAP_PROP_CONVERT_RGB, 1)  # YUY2→BGR 강제 변환
 
-        def _can_read(cap_obj, timeout=4.0) -> bool:
-            """프레임을 하나라도 읽으면 True (밝기 무관)."""
+        def _can_read(cap_obj, timeout=8.0) -> bool:
+            """
+            실제 화상 데이터(밝기 > 3)가 있는 프레임이 나오면 True.
+            warmup 때 검은 프레임은 무시하고 최대 50프레임 시도.
+            이를 통해 IR카메라·가상카메라(항상 검은색)와 실제 웹캠을 구별.
+            """
             import queue as _q, threading as _t
             result: "_q.Queue[bool]" = _q.Queue(1)
+
             def _r():
-                for _ in range(10):
+                for _ in range(50):
                     ret, f = cap_obj.read()
-                    if ret and f is not None:
+                    if ret and f is not None and float(f.mean()) > 3.0:
                         result.put(True)
                         return
                 result.put(False)
+
             _t.Thread(target=_r, daemon=True).start()
             try:
                 return result.get(timeout=timeout)
@@ -248,58 +225,49 @@ class CameraProcessor:
         cap = None
         found_id = -1
 
-        # ① 장치 이름으로 DSHOW 직접 열기
-        dev_name = getattr(c, "CAMERA_DEVICE_NAME", None)
-        if dev_name:
-            dshow_str = f"video={dev_name}"
-            print(f"[Camera] 이름으로 열기: '{dshow_str}'")
-            c_try = cv2.VideoCapture(dshow_str, cv2.CAP_DSHOW)
-            if c_try.isOpened():
-                _setup(c_try)  # MJPG 설정을 먼저
-                if _can_read(c_try):
-                    cap = c_try
-                    found_id = dshow_str
-                    print(f"[Camera] '{dshow_str}' 오픈 성공!")
-                else:
-                    print(f"[Camera] '{dshow_str}' 읽기 실패 → 인덱스 탐색으로 fallback")
-                    c_try.release()
-            else:
-                print(f"[Camera] '{dshow_str}' 오픈 실패 → 인덱스 탐색으로 fallback")
-                c_try.release()
+        # MSMF는 이 PC에서 VideoCapture() 호출 자체가 무한 블로킹 → 제외
+        # DSHOW: 포맷 자동(YUY2) 우선, 그 다음 MJPG 강제
+        BACKENDS = [
+            (cv2.CAP_DSHOW, "DSHOW",      False),
+            (cv2.CAP_DSHOW, "DSHOW+MJPG", True),
+        ]
 
-        # ② 인덱스 탐색 (DSHOW → MSMF, 밝기 무관하게 읽히면 OK)
-        if cap is None:
-            BACKENDS = [(cv2.CAP_DSHOW, "DSHOW"), (None, "MSMF")]
-            ids_to_try = [cam_id] + [i for i in range(5) if i != cam_id]
-            for idx in ids_to_try:
-                for backend, bname in BACKENDS:
-                    try:
-                        c_try = (
-                            cv2.VideoCapture(idx, backend)
-                            if backend is not None
-                            else cv2.VideoCapture(idx)
-                        )
-                        if not c_try.isOpened():
-                            c_try.release()
-                            continue
-                        _setup(c_try)
-                        print(f"[Camera] idx={idx} ({bname}) 읽기 테스트...")
-                        if _can_read(c_try):
-                            cap = c_try
-                            found_id = idx
-                            print(f"[Camera] 카메라 {idx} ({bname}) 선택됨!")
-                            break
-                        else:
-                            print(f"[Camera] idx={idx} ({bname}) 읽기 불가 → 건너뜀")
-                            c_try.release()
-                    except Exception as e:
-                        print(f"[Camera] idx={idx} ({bname}) 오류: {e}")
-                if cap is not None:
-                    break
+        ids_to_try = [cam_id] + [i for i in range(5) if i != cam_id]
+        for idx in ids_to_try:
+            for backend, bname, mjpg in BACKENDS:
+                try:
+                    c_try = cv2.VideoCapture(idx, backend)
+                    if not c_try.isOpened():
+                        c_try.release()
+                        continue
+                    _setup(c_try, force_mjpg=mjpg)
+                    # 카메라 센서 초기화 대기 (안 하면 첫 N프레임이 검은색)
+                    time.sleep(2)
+                    print(f"[Camera] idx={idx} ({bname}) 읽기 테스트...")
+                    if _can_read(c_try):
+                        cap = c_try
+                        found_id = idx
+                        print(f"[Camera] 카메라 {idx} ({bname}) 선택됨!")
+                        break
+                    else:
+                        print(f"[Camera] idx={idx} ({bname}) 읽기 불가 → 건너뜀")
+                        c_try.release()
+                except Exception as e:
+                    print(f"[Camera] idx={idx} ({bname}) 오류: {e}")
+            if cap is not None:
+                break
 
         if cap is None:
-            print("[Camera] 사용 가능한 카메라 없음 → 더미 프레임 모드")
-            self._dummy_loop()
+            # 카메라 실패 → mp4 폴백이 있으면 영상 재생, 없으면 재연결 시도
+            fallback = getattr(c, "VIDEO_FALLBACK", None)
+            if fallback and os.path.exists(fallback):
+                print(f"[Camera] 카메라 열기 실패 → 폴백 영상 재생: {fallback}")
+                self._video_loop(fallback)
+                return
+            print("[Camera] 카메라 열기 실패 → 5초 후 재시도")
+            self._show_reconnecting()
+            time.sleep(5)
+            self._loop(cam_id)   # 재귀 재시도
             return
 
         print(f"[Camera] 카메라 확정: {found_id}")
@@ -311,14 +279,16 @@ class CameraProcessor:
         frame_count = 0
         while self._running:
             try:
-                ret, frame = frame_q.get(timeout=2.0)
+                ret, frame = frame_q.get(timeout=5.0)
             except _queue.Empty:
                 fail_count += 1
                 print(f"[Camera] 프레임 타임아웃 ({fail_count}회)")
                 if fail_count > 10:
-                    print("[Camera] 연속 타임아웃 → 더미 프레임 모드")
+                    print("[Camera] 연속 타임아웃 → 5초 후 재연결 시도")
                     cap.release()
-                    self._dummy_loop()
+                    self._show_reconnecting()
+                    time.sleep(5)
+                    self._loop(cam_id)
                     return
                 continue
 
@@ -326,9 +296,11 @@ class CameraProcessor:
                 fail_count += 1
                 print(f"[Camera] 프레임 읽기 실패 ({fail_count}회)")
                 if fail_count > 30:
-                    print("[Camera] 연속 실패 → 더미 프레임 모드")
+                    print("[Camera] 연속 실패 → 5초 후 재연결 시도")
                     cap.release()
-                    self._dummy_loop()
+                    self._show_reconnecting()
+                    time.sleep(5)
+                    self._loop(cam_id)
                     return
                 time.sleep(0.05)
                 continue
@@ -362,6 +334,74 @@ class CameraProcessor:
 
         cap.release()
         print(f"[Camera] 카메라 {cam_id} 종료")
+
+    def _video_loop(self, video_path: str):
+        """
+        폴백: mp4 등 동영상 파일을 카메라처럼 처리.
+        - 각 프레임에 탐지/인식/익명화 적용 (카메라와 동일)
+        - 영상이 끝나면 처음부터 다시 재생 (무한 루프)
+        """
+        import time
+
+        fps = getattr(c, "VIDEO_FALLBACK_FPS", 25)
+        delay = 1.0 / max(1, fps)
+
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print(f"[Video] 영상 열기 실패: {video_path} → 더미 모드")
+            self._dummy_loop()
+            return
+
+        print(f"[Video] 폴백 영상 재생 시작 (목표 fps={fps})")
+        frame_count = 0
+        while self._running:
+            t0 = time.time()
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                # 영상 끝 → 처음으로 되감기
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                continue
+
+            frame_count += 1
+            try:
+                frame, emp, unk = self._process(frame)
+            except Exception as e:
+                print(f"[Video] _process 오류 (건너뜀): {e}")
+                emp, unk = 0, 0
+
+            # 폴백 영상 표시 (데모용 표식)
+            cv2.putText(frame, f"DEMO (video) F{frame_count}",
+                        (10, frame.shape[0] - 12),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 220, 255), 1)
+
+            with self._stats_lock:
+                self._stats["employee_count"] = emp
+                self._stats["unknown_count"] = unk
+
+            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            if ok:
+                with self._frame_lock:
+                    self._latest_jpeg = buf.tobytes()
+
+            # 처리 시간만큼 빼서 보정 — 처리가 이미 느리면 sleep 안 함
+            elapsed = time.time() - t0
+            if elapsed < delay:
+                time.sleep(delay - elapsed)
+
+        cap.release()
+        print("[Video] 폴백 영상 종료")
+
+    def _show_reconnecting(self):
+        """재연결 대기 중 화면을 JPEG 버퍼에 공급."""
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        frame[:] = (30, 30, 40)
+        cv2.putText(frame, "Reconnecting...", (160, 230),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (100, 140, 200), 2)
+        cv2.putText(frame, "Camera disconnected. Retrying in 5s", (60, 270),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (80, 80, 100), 1)
+        _, buf = cv2.imencode(".jpg", frame)
+        with self._frame_lock:
+            self._latest_jpeg = buf.tobytes()
 
     def _dummy_loop(self):
         """카메라 없을 때 대기 화면을 MJPEG 버퍼에 계속 공급."""
