@@ -89,3 +89,21 @@ CAMERA_DEVICE_NAME = "Logi C310 HD WebCam"
 # 실제 카메라가 안 될 때 이 영상으로 데모/녹화/복원 파이프라인을 그대로 시연.
 VIDEO_FALLBACK = "demo.mp4"
 VIDEO_FALLBACK_FPS = 25   # 재생 속도 (원본 영상 fps에 맞춤)
+
+# True이면 카메라 탐색을 건너뛰고 무조건 VIDEO_FALLBACK 영상을 사용.
+# (이 PC 카메라가 검은 프레임만 줄 때 demo.mp4로 강제하는 용도)
+FORCE_VIDEO = True
+
+# PSF 녹화 간격(초). 작을수록 복원 영상이 부드럽지만 디스크 사용 증가.
+RECORD_INTERVAL = 1
+
+# 청크 길이(분). 이 시간 단위로 새 청크 폴더가 생성됨.
+# 데모 안정성: 짧게(1분)면 청크당 프레임 수가 적어 복원이 빠름.
+CHUNK_MINUTES = 1
+
+# 복원 영상 재생 fps
+RESTORE_VIDEO_FPS = 5
+
+# ffmpeg 실행 파일 경로 (None이면 PATH에서 탐색).
+# 브라우저 호환 H.264 변환에 사용. winget 설치 시 PATH에 없을 수 있어 직접 지정.
+FFMPEG_PATH = r"C:\Users\HOSEO\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin\ffmpeg.exe"

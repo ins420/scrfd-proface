@@ -36,9 +36,20 @@ def _load_json(path: str) -> dict | None:
         return None
 
 
+def _json_default(o):
+    """numpy 정수/실수/배열을 JSON 직렬화 가능 타입으로 변환."""
+    if isinstance(o, np.integer):
+        return int(o)
+    if isinstance(o, np.floating):
+        return float(o)
+    if isinstance(o, np.ndarray):
+        return o.tolist()
+    raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
+
+
 def _save_json(path: str, data: dict):
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(data, f, ensure_ascii=False, indent=2, default=_json_default)
 
 
 def _sha256(path: str) -> str:
@@ -84,7 +95,15 @@ class PSFRecorder:
     # ── 내부 루프 ──────────────────────────────────────────────────────────
 
     def _chunk_dir(self) -> str:
-        path = os.path.join(RECORDINGS_DIR, datetime.now().strftime("%Y-%m-%d_%H"))
+        import config as c
+        mins = getattr(c, "CHUNK_MINUTES", 60)
+        now = datetime.now()
+        if mins >= 60:
+            stamp = now.strftime("%Y-%m-%d_%H")
+        else:
+            bucket = (now.minute // mins) * mins  # N분 단위로 내림
+            stamp = now.strftime("%Y-%m-%d_%H-") + f"{bucket:02d}"
+        path = os.path.join(RECORDINGS_DIR, stamp)
         os.makedirs(path, exist_ok=True)
         return path
 
@@ -186,6 +205,86 @@ class PSFRecorder:
             return None
         with open(p, "rb") as f:
             return f.read()
+
+    def restore_chunk_video(self, chunk_id: str, password: str) -> str | None:
+        """
+        청크 내 모든 프레임을 복원해 mp4로 합쳐 경로 반환.
+        원본 이미지는 사용하지 않고 저장된 tile_f32(보호본)에서 복원.
+        """
+        import config as c
+        from core.anonymizer import INNAnonymizer
+
+        path = os.path.join(RECORDINGS_DIR, chunk_id)
+        if not os.path.isdir(path):
+            return None
+        frame_dirs = sorted(d for d in os.listdir(path) if d.isdigit())
+        if not frame_dirs:
+            return None
+
+        anon = None
+        if c.INN_CHECKPOINT is not None:
+            anon = INNAnonymizer(checkpoint_path=c.INN_CHECKPOINT)
+
+        fps = getattr(c, "RESTORE_VIDEO_FPS", 5)
+        raw_path = os.path.join(path, "restored_raw.mp4")  # mp4v (브라우저 비호환)
+        out_path = os.path.join(path, "restored.mp4")       # H.264 (브라우저 호환)
+        writer = None
+
+        for fid in frame_dirs:
+            snap = os.path.join(path, fid)
+            frame = cv2.imread(os.path.join(snap, "frame.jpg"))
+            if frame is None:
+                continue
+
+            if anon is not None:
+                for i in range(20):
+                    npy_path = os.path.join(snap, f"face_{i}.npy")
+                    box_path = os.path.join(snap, f"face_{i}_box.json")
+                    if not os.path.exists(npy_path):
+                        break
+                    tile_f32 = np.load(npy_path)
+                    crop_box = _load_json(box_path)
+                    try:
+                        frame = anon.restore_roi(frame, tile_f32, crop_box, password)
+                    except Exception as e:
+                        print(f"[RestoreVideo] {fid} face_{i} 실패: {e}")
+            else:
+                cv2.putText(frame, "INN checkpoint required", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 200), 2)
+
+            if writer is None:
+                h, w = frame.shape[:2]
+                writer = cv2.VideoWriter(
+                    raw_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)
+                )
+            writer.write(frame)
+
+        if writer is None:
+            return None
+        writer.release()
+
+        # ffmpeg으로 H.264 + yuv420p 변환 (브라우저 재생 호환)
+        import shutil
+        import subprocess
+        ffmpeg = getattr(c, "FFMPEG_PATH", None)
+        if not ffmpeg or not os.path.exists(ffmpeg):
+            ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg:
+            try:
+                subprocess.run(
+                    [ffmpeg, "-y", "-i", raw_path,
+                     "-vcodec", "libx264", "-pix_fmt", "yuv420p",
+                     "-movflags", "+faststart", out_path],
+                    check=True,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                print(f"[RestoreVideo] {chunk_id} H.264 변환 완료: {out_path}")
+                return out_path
+            except Exception as e:
+                print(f"[RestoreVideo] ffmpeg 변환 실패 → mp4v 반환: {e}")
+                return raw_path
+        print("[RestoreVideo] ffmpeg 없음 → mp4v 반환 (브라우저 재생 안 될 수 있음)")
+        return raw_path
 
     def restore_frame(
         self, chunk_id: str, frame_id: str, password: str

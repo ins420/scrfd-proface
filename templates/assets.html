@@ -237,7 +237,7 @@
 <div class="modal-backdrop" id="pwModal">
   <div class="modal">
     <div class="modal-title">🔑 복원 인증</div>
-    <div class="modal-desc">프레임 <strong id="modalFrameId"></strong>의 익명화를 복원하려면<br>PSF 비밀번호를 입력하세요.</div>
+    <div class="modal-desc"><strong id="modalFrameId"></strong> 복원하려면<br>PSF 비밀번호를 입력하세요. (영상 복원은 시간이 걸립니다)</div>
     <input type="password" class="modal-input" id="pwInput" placeholder="비밀번호 입력" />
     <div class="modal-error" id="modalError">비밀번호가 올바르지 않거나 복원에 실패했습니다.</div>
     <div class="modal-footer">
@@ -318,6 +318,7 @@
           <div class="detail-title">${d.chunk_id}</div>
           <div class="detail-sub">시작: ${d.start_time ?? '알 수 없음'} · 마지막 업데이트: ${d.last_update ?? '-'}</div>
         </div>
+        ${hasFaces ? `<button class="btn btn-primary" onclick="openVideoModal('${d.chunk_id}')">🔓 복원하기</button>` : ''}
       </div>
       <div class="info-chips">
         <span class="chip chip-blue">${d.frame_count ?? 0} 프레임</span>
@@ -325,46 +326,31 @@
         ${hasFaces ? '<span class="chip chip-red">복원 가능</span>' : '<span class="chip chip-green">복원 불필요</span>'}
       </div>
 
-      <div>
-        <div class="section-title">저장된 프레임 (클릭하여 복원)</div>
-        <div class="frame-grid" id="frameGrid">
-          ${(d.frames ?? []).map(f => `
-            <div class="frame-card" id="fc_${f.frame_id}" onclick="selectFrame('${d.chunk_id}', '${f.frame_id}', this)">
-              <img src="/recordings/${d.chunk_id}/${f.frame_id}/frame?t=${Date.now()}" alt="${f.frame_id}"
-                   onerror="this.src=''" loading="lazy">
-              <div class="frame-card-info">
-                <span class="frame-id">#${f.frame_id}</span>
-                <span class="face-count-badge ${f.face_count === 0 ? 'zero' : ''}">
-                  ${f.face_count > 0 ? f.face_count + '명' : '-'}
-                </span>
-              </div>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-
       <div class="restore-panel" id="restoreResult" style="display:none">
-        <div class="restore-panel-title">복원 결과 (SCR-005)</div>
+        <div class="restore-panel-title">복원 영상 (SCR-005)</div>
         <div class="restore-img-wrap">
-          <img id="restoredImg" src="" alt="복원된 프레임">
+          <video id="restoredVideo" controls autoplay loop style="width:100%;"></video>
         </div>
       </div>
     `;
     document.getElementById('detailPanel').innerHTML = html;
+
+    // 얼굴이 있는 청크면 클릭 즉시 복원 인증 모달 표시
+    if (hasFaces) openVideoModal(d.chunk_id);
   }
 
-  // ── 프레임 선택 → 비밀번호 모달 ──
-  function selectFrame(chunkId, frameId, el) {
+  let restoreMode = 'video';
+
+  // ── 영상으로 복원 모달 ──
+  function openVideoModal(chunkId) {
     selectedChunk = chunkId;
-    selectedFrame = frameId;
-    document.querySelectorAll('.frame-card').forEach(c => c.classList.remove('selected'));
-    el.classList.add('selected');
-    openModal(frameId);
+    restoreMode = 'video';
+    openModal('이 청크를 영상으로');
   }
 
   // ── 비밀번호 모달 ──
-  function openModal(frameId) {
-    document.getElementById('modalFrameId').textContent = '#' + frameId;
+  function openModal(targetLabel) {
+    document.getElementById('modalFrameId').textContent = targetLabel;
     document.getElementById('pwInput').value = '';
     document.getElementById('modalError').style.display = 'none';
     document.getElementById('restoreBtnText').textContent = '복원';
@@ -387,19 +373,15 @@
     document.getElementById('modalError').style.display = 'none';
 
     try {
-      const res = await fetch('/api/restore', {
+      const res = await fetch('/api/restore_video', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          chunk_id: selectedChunk,
-          frame_id: selectedFrame,
-          password: pw,
-        }),
+        body: JSON.stringify({chunk_id: selectedChunk, password: pw}),
       });
       if (!res.ok) throw new Error('서버 오류');
-      const data = await res.json();
+      const blob = await res.blob();
       closeModal();
-      showRestored(data.image_base64);
+      showRestoredVideo(URL.createObjectURL(blob));
     } catch {
       document.getElementById('modalError').style.display = 'block';
     } finally {
@@ -408,10 +390,11 @@
     }
   }
 
-  function showRestored(b64) {
+  function showRestoredVideo(url) {
     const panel = document.getElementById('restoreResult');
     panel.style.display = 'block';
-    document.getElementById('restoredImg').src = b64;
+    const vid = document.getElementById('restoredVideo');
+    vid.src = url;
     panel.scrollIntoView({behavior: 'smooth'});
   }
 

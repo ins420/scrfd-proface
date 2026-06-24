@@ -32,7 +32,7 @@ import cv2
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from insightface.utils import face_align
 from pydantic import BaseModel
@@ -79,7 +79,7 @@ async def lifespan(app: FastAPI):
     _init_db()
     camera = CameraProcessor()
     camera.start(cam_id=0)
-    recorder = PSFRecorder(camera, interval_sec=5)
+    recorder = PSFRecorder(camera, interval_sec=getattr(c, "RECORD_INTERVAL", 5))
     recorder.start()
     yield
     if recorder:
@@ -337,6 +337,24 @@ async def api_restore(req: RestoreRequest):
         raise HTTPException(status_code=404, detail="프레임을 찾을 수 없습니다.")
     encoded = base64.b64encode(data).decode()
     return {"status": "ok", "image_base64": f"data:image/jpeg;base64,{encoded}"}
+
+
+# ── API — 청크 전체 복원 영상 ─────────────────────────────────────────────
+class RestoreVideoRequest(BaseModel):
+    chunk_id: str
+    password: str
+
+
+@app.post("/api/restore_video")
+async def api_restore_video(req: RestoreVideoRequest):
+    if recorder is None:
+        raise HTTPException(status_code=503, detail="Recorder not ready")
+    path = await asyncio.to_thread(
+        recorder.restore_chunk_video, req.chunk_id, req.password
+    )
+    if path is None or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="복원할 프레임이 없습니다.")
+    return FileResponse(path, media_type="video/mp4", filename="restored.mp4")
 
 
 # ── 직접 실행 ─────────────────────────────────────────────────────────────

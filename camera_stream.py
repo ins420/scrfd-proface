@@ -192,6 +192,15 @@ class CameraProcessor:
         import time
         import queue as _queue
 
+        # FORCE_VIDEO: 카메라 탐색을 건너뛰고 바로 폴백 영상 사용
+        if getattr(c, "FORCE_VIDEO", False):
+            fallback = getattr(c, "VIDEO_FALLBACK", None)
+            if fallback and os.path.exists(fallback):
+                print(f"[Camera] FORCE_VIDEO=True → 영상 재생: {fallback}")
+                self._video_loop(fallback)
+                return
+            print(f"[Camera] FORCE_VIDEO=True 이지만 영상 없음: {fallback}")
+
         def _setup(cap_obj, force_mjpg: bool = False):
             if force_mjpg:
                 cap_obj.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
