@@ -110,6 +110,9 @@ class CameraProcessor:
         self._frame_lock = threading.Lock()
         self._latest_jpeg: bytes | None = None
 
+        self._tiles_lock = threading.Lock()
+        self._latest_tiles: list = []   # [{"tile_f32": ndarray, "crop_box": list}]
+
         self._stats_lock = threading.Lock()
         self._stats = {"employee_count": 0, "unknown_count": 0, "recording": True}
 
@@ -139,6 +142,16 @@ class CameraProcessor:
     def get_stats(self) -> dict:
         with self._stats_lock:
             return dict(self._stats)
+
+    def get_recording_snapshot(self) -> dict | None:
+        """녹화용 스냅샷: 현재 JPEG + INN 타일 목록 반환."""
+        with self._frame_lock:
+            jpeg = self._latest_jpeg
+        if jpeg is None:
+            return None
+        with self._tiles_lock:
+            tiles = list(self._latest_tiles)
+        return {"jpeg": jpeg, "tiles": tiles}
 
     # ── 캡처 루프 ─────────────────────────────────────────────────────────
 
@@ -208,9 +221,12 @@ class CameraProcessor:
         import queue as _queue
 
         def _setup(cap_obj):
+            # MJPG 먼저 설정 — Logitech 등 일부 웹캠은 기본 YUY2로 열리면 검은 프레임 반환
+            cap_obj.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
             cap_obj.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             cap_obj.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             cap_obj.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            cap_obj.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
 
         def _can_read(cap_obj, timeout=4.0) -> bool:
             """프레임을 하나라도 읽으면 True (밝기 무관)."""
@@ -238,13 +254,17 @@ class CameraProcessor:
             dshow_str = f"video={dev_name}"
             print(f"[Camera] 이름으로 열기: '{dshow_str}'")
             c_try = cv2.VideoCapture(dshow_str, cv2.CAP_DSHOW)
-            if c_try.isOpened() and _can_read(c_try):
-                _setup(c_try)
-                cap = c_try
-                found_id = dshow_str
-                print(f"[Camera] '{dshow_str}' 오픈 성공!")
+            if c_try.isOpened():
+                _setup(c_try)  # MJPG 설정을 먼저
+                if _can_read(c_try):
+                    cap = c_try
+                    found_id = dshow_str
+                    print(f"[Camera] '{dshow_str}' 오픈 성공!")
+                else:
+                    print(f"[Camera] '{dshow_str}' 읽기 실패 → 인덱스 탐색으로 fallback")
+                    c_try.release()
             else:
-                print(f"[Camera] '{dshow_str}' 실패 → 인덱스 탐색으로 fallback")
+                print(f"[Camera] '{dshow_str}' 오픈 실패 → 인덱스 탐색으로 fallback")
                 c_try.release()
 
         # ② 인덱스 탐색 (DSHOW → MSMF, 밝기 무관하게 읽히면 OK)
@@ -378,9 +398,12 @@ class CameraProcessor:
     def _process(self, frame: np.ndarray) -> tuple[np.ndarray, int, int]:
         bboxes, kpss = self.detector.detect(frame, max_num=0, metric="default")
         if bboxes is None or len(bboxes) == 0:
+            with self._tiles_lock:
+                self._latest_tiles = []
             return frame, 0, 0
 
         emp, unk = 0, 0
+        tiles = []
         for i in range(bboxes.shape[0]):
             x1, y1, x2, y2 = bboxes[i, :4].astype(int)
             lm = kpss[i]
@@ -393,9 +416,10 @@ class CameraProcessor:
                 unk += 1
                 if self._anonymizer is not None:
                     try:
-                        frame, _, _ = self._anonymizer.protect_roi(
+                        frame, tile_f32, crop_box = self._anonymizer.protect_roi(
                             frame, [x1, y1, x2, y2], self._password
                         )
+                        tiles.append({"tile_f32": tile_f32, "crop_box": crop_box})
                     except Exception as e:
                         print(f"[INN] protect_roi 실패 → 모자이크: {e}")
                         frame = self._mosaic(frame, x1, y1, x2, y2)
@@ -406,6 +430,8 @@ class CameraProcessor:
 
             frame = self._draw(frame, x1, y1, x2, y2, name, group, sim)
 
+        with self._tiles_lock:
+            self._latest_tiles = tiles
         return frame, emp, unk
 
     def _match(self, emb) -> tuple[str, str, float]:

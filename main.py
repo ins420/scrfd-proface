@@ -1,13 +1,21 @@
 """
 SecureFace-RX v2 — 통합 FastAPI 서버
 
-  GET  /                → 실시간 모니터링 (SCR-002)
-  GET  /register        → 사원 등록 UI
-  GET  /stream/cam_0    → MJPEG 익명화 스트림
-  GET  /api/stats       → 실시간 통계 (사원수/외부인수)
-  GET  /api/users       → 등록 사원 목록
-  POST /api/users/reload → 카메라 DB 즉시 갱신
-  POST /api/register    → 얼굴 등록 (3각도)
+  GET  /                        → 실시간 모니터링 (SCR-002)
+  GET  /register                → 사원 등록 UI
+  GET  /assets                  → 보호 자산 목록 (SCR-003/004)
+  GET  /employees               → 사원 관리 UI (SCR-006)
+  GET  /stream/cam_0            → MJPEG 익명화 스트림
+  GET  /api/stats               → 실시간 통계
+  GET  /api/users               → 등록 사원 목록
+  DELETE /api/users/{name}      → 사원 삭제 (SCR-006)
+  POST /api/users/reload        → 카메라 DB 즉시 갱신
+  POST /api/register            → 얼굴 등록 (3각도)
+  GET  /api/assets              → 녹화 청크 목록
+  GET  /api/assets/{chunk_id}   → 청크 상세
+  GET  /recordings/{chunk_id}/thumb            → 청크 썸네일 JPEG
+  GET  /recordings/{chunk_id}/{frame_id}/frame → 개별 프레임 JPEG
+  POST /api/restore             → INN 역변환 복원 (SCR-005)
 
 실행:
   python main.py
@@ -22,7 +30,7 @@ from contextlib import asynccontextmanager
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
@@ -36,11 +44,13 @@ from camera_stream import (
     _adapt_array,
     _convert_array,
 )
+from recorder import PSFRecorder
 
 IMAGE_DIR = "registered_faces"
 os.makedirs(IMAGE_DIR, exist_ok=True)
 
 camera: CameraProcessor | None = None
+recorder: PSFRecorder | None = None
 
 
 # ── DB 초기화 ─────────────────────────────────────────────────────────────
@@ -65,11 +75,15 @@ def _init_db():
 # ── Lifespan (FastAPI 0.93+ 권장 방식) ───────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global camera
+    global camera, recorder
     _init_db()
     camera = CameraProcessor()
     camera.start(cam_id=0)
+    recorder = PSFRecorder(camera, interval_sec=5)
+    recorder.start()
     yield
+    if recorder:
+        recorder.stop()
     if camera:
         camera.stop()
 
@@ -95,6 +109,16 @@ async def page_monitor(request: Request):
 @app.get("/register", response_class=HTMLResponse)
 async def page_register(request: Request):
     return templates.TemplateResponse(request=request, name="index.html")
+
+
+@app.get("/assets", response_class=HTMLResponse)
+async def page_assets(request: Request):
+    return templates.TemplateResponse(request=request, name="assets.html")
+
+
+@app.get("/employees", response_class=HTMLResponse)
+async def page_employees(request: Request):
+    return templates.TemplateResponse(request=request, name="employees.html")
 
 
 # ── 스냅샷 (단일 JPEG, JS 폴링용) ────────────────────────────────────────
@@ -172,6 +196,23 @@ async def api_reload():
     return {"status": "ok"}
 
 
+# ── API — 사원 삭제 (Phase 6) ─────────────────────────────────────────────
+@app.delete("/api/users/{name}")
+async def api_delete_user(name: str):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.execute(
+        "DELETE FROM users WHERE name LIKE ?", (f"{name}_%",)
+    )
+    deleted = cur.rowcount
+    conn.commit()
+    conn.close()
+    if deleted == 0:
+        raise HTTPException(status_code=404, detail="사원을 찾을 수 없습니다.")
+    if camera:
+        camera.reload_db()
+    return {"status": "ok", "deleted": deleted}
+
+
 # ── API — 얼굴 등록 ───────────────────────────────────────────────────────
 class RegisterData(BaseModel):
     name: str
@@ -238,6 +279,64 @@ async def api_register(data: RegisterData):
 
     except Exception as e:
         return {"status": "error", "message": f"서버 오류: {e}"}
+
+
+# ── API — 보호 자산 목록 (Phase 4) ───────────────────────────────────────
+@app.get("/api/assets")
+async def api_assets():
+    if recorder is None:
+        return []
+    return recorder.list_chunks()
+
+
+@app.get("/api/assets/{chunk_id}")
+async def api_asset_detail(chunk_id: str):
+    if recorder is None:
+        raise HTTPException(status_code=503, detail="Recorder not ready")
+    detail = recorder.get_chunk_detail(chunk_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="청크를 찾을 수 없습니다.")
+    return detail
+
+
+@app.get("/recordings/{chunk_id}/thumb")
+async def recording_thumb(chunk_id: str):
+    if recorder is None:
+        raise HTTPException(status_code=503, detail="Recorder not ready")
+    data = recorder.get_thumb_jpeg(chunk_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="썸네일 없음")
+    return Response(content=data, media_type="image/jpeg",
+                    headers={"Cache-Control": "max-age=60"})
+
+
+@app.get("/recordings/{chunk_id}/{frame_id}/frame")
+async def recording_frame(chunk_id: str, frame_id: str):
+    if recorder is None:
+        raise HTTPException(status_code=503, detail="Recorder not ready")
+    data = recorder.get_frame_jpeg(chunk_id, frame_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="프레임 없음")
+    return Response(content=data, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-cache"})
+
+
+# ── API — INN 복원 (Phase 5) ──────────────────────────────────────────────
+class RestoreRequest(BaseModel):
+    chunk_id: str
+    frame_id: str
+    password: str
+
+
+@app.post("/api/restore")
+async def api_restore(req: RestoreRequest):
+    if recorder is None:
+        raise HTTPException(status_code=503, detail="Recorder not ready")
+    data = recorder.restore_frame(req.chunk_id, req.frame_id, req.password)
+    if data is None:
+        raise HTTPException(status_code=404, detail="프레임을 찾을 수 없습니다.")
+    encoded = base64.b64encode(data).decode()
+    return {"status": "ok", "image_base64": f"data:image/jpeg;base64,{encoded}"}
 
 
 # ── 직접 실행 ─────────────────────────────────────────────────────────────

@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SecureFace-RX — 보호 자산</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; background: #F1F5F9; color: #1E293B; min-height: 100vh; }
+
+    /* ── 상단 바 ── */
+    .topbar {
+      background: #fff; border-bottom: 1px solid #E2E8F0;
+      padding: 0 24px; height: 56px;
+      display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 100;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .topbar-logo { font-size: 17px; font-weight: 700; color: #3B82F6; letter-spacing: -0.3px; }
+    .topbar-logo span { color: #1E293B; font-weight: 400; }
+    .topbar-nav a {
+      text-decoration: none; color: #64748B;
+      margin-left: 4px; font-size: 14px;
+      padding: 6px 14px; border-radius: 8px; transition: background 0.15s;
+    }
+    .topbar-nav a:hover { background: #F1F5F9; color: #1E293B; }
+    .topbar-nav a.active { background: #EFF6FF; color: #3B82F6; font-weight: 600; }
+
+    /* ── 레이아웃 ── */
+    .page { display: flex; height: calc(100vh - 56px); }
+
+    /* ── 청크 목록 패널 ── */
+    .panel-list {
+      width: 320px; min-width: 260px;
+      background: #fff; border-right: 1px solid #E2E8F0;
+      overflow-y: auto; flex-shrink: 0;
+    }
+    .panel-list-header {
+      padding: 16px 20px 12px;
+      border-bottom: 1px solid #E2E8F0;
+      font-size: 13px; font-weight: 600; color: #475569;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .chunk-count { font-size: 12px; color: #94A3B8; font-weight: 400; }
+
+    .chunk-item {
+      display: flex; gap: 12px; align-items: flex-start;
+      padding: 14px 20px; cursor: pointer;
+      border-bottom: 1px solid #F1F5F9;
+      transition: background 0.12s;
+    }
+    .chunk-item:hover { background: #F8FAFC; }
+    .chunk-item.selected { background: #EFF6FF; border-left: 3px solid #3B82F6; }
+
+    .chunk-thumb {
+      width: 64px; height: 48px;
+      object-fit: cover; border-radius: 6px;
+      background: #F1F5F9; border: 1px solid #E2E8F0;
+      flex-shrink: 0;
+    }
+    .chunk-thumb-ph {
+      width: 64px; height: 48px;
+      background: #F1F5F9; border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; color: #CBD5E1; flex-shrink: 0;
+    }
+    .chunk-info { flex: 1; min-width: 0; }
+    .chunk-id { font-size: 13px; font-weight: 600; color: #1E293B; }
+    .chunk-meta { font-size: 11px; color: #64748B; margin-top: 3px; }
+    .chunk-badge {
+      display: inline-block; background: #F0FDF4; color: #16A34A;
+      font-size: 10px; font-weight: 600; padding: 2px 7px;
+      border-radius: 10px; margin-top: 4px;
+    }
+    .chunk-badge.faces { background: #FEF9C3; color: #854D0E; }
+
+    .empty-state {
+      padding: 48px 20px; text-align: center;
+      color: #94A3B8; font-size: 13px;
+    }
+    .empty-icon { font-size: 36px; margin-bottom: 12px; }
+
+    /* ── 상세 패널 ── */
+    .panel-detail {
+      flex: 1; overflow-y: auto; padding: 24px;
+      display: flex; flex-direction: column; gap: 20px;
+    }
+
+    .detail-placeholder {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      color: #94A3B8; gap: 12px;
+    }
+    .detail-placeholder .ph-icon { font-size: 48px; opacity: 0.4; }
+    .detail-placeholder .ph-text { font-size: 14px; }
+
+    .detail-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 12px;
+    }
+    .detail-title { font-size: 18px; font-weight: 700; color: #1E293B; }
+    .detail-sub { font-size: 13px; color: #64748B; margin-top: 3px; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 16px; border-radius: 8px; font-size: 13px;
+      font-family: inherit; font-weight: 600; cursor: pointer;
+      border: none; transition: all 0.15s;
+    }
+    .btn-primary { background: #3B82F6; color: #fff; }
+    .btn-primary:hover { background: #2563EB; }
+    .btn-ghost { background: #F1F5F9; color: #475569; }
+    .btn-ghost:hover { background: #E2E8F0; }
+
+    /* ── 프레임 그리드 ── */
+    .section-title {
+      font-size: 13px; font-weight: 600; color: #475569;
+      margin-bottom: 12px;
+    }
+    .frame-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 10px;
+    }
+    .frame-card {
+      background: #fff; border: 1px solid #E2E8F0;
+      border-radius: 10px; overflow: hidden;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .frame-card:hover { box-shadow: 0 4px 12px rgba(59,130,246,0.15); border-color: #93C5FD; }
+    .frame-card.selected { border-color: #3B82F6; box-shadow: 0 0 0 2px #BFDBFE; }
+    .frame-card img {
+      width: 100%; aspect-ratio: 4/3;
+      object-fit: cover; display: block;
+    }
+    .frame-card-info {
+      padding: 6px 10px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .frame-id { font-size: 11px; color: #64748B; font-weight: 600; }
+    .face-count-badge {
+      font-size: 10px; background: #FEF9C3; color: #854D0E;
+      padding: 1px 6px; border-radius: 8px; font-weight: 600;
+    }
+    .face-count-badge.zero { background: #F1F5F9; color: #94A3B8; }
+
+    /* ── 복원 결과 영역 ── */
+    .restore-panel {
+      background: #fff; border: 1px solid #E2E8F0;
+      border-radius: 14px; padding: 20px;
+    }
+    .restore-panel-title { font-size: 14px; font-weight: 700; color: #1E293B; margin-bottom: 14px; }
+    .restore-img-wrap {
+      width: 100%; max-width: 480px;
+      background: #F8FAFC; border-radius: 8px; overflow: hidden;
+      border: 1px solid #E2E8F0;
+    }
+    .restore-img-wrap img { width: 100%; display: block; }
+
+    /* ── 비밀번호 모달 ── */
+    .modal-backdrop {
+      display: none; position: fixed; inset: 0;
+      background: rgba(15,23,42,0.5); backdrop-filter: blur(4px);
+      z-index: 200; align-items: center; justify-content: center;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      background: #fff; border-radius: 16px;
+      padding: 28px; width: 380px; max-width: 90vw;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+    }
+    .modal-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+    .modal-desc { font-size: 13px; color: #64748B; margin-bottom: 20px; }
+    .modal-input {
+      width: 100%; padding: 10px 14px;
+      border: 1px solid #E2E8F0; border-radius: 8px;
+      font-size: 14px; font-family: inherit;
+      margin-bottom: 16px; outline: none;
+      transition: border-color 0.15s;
+    }
+    .modal-input:focus { border-color: #3B82F6; }
+    .modal-error { font-size: 12px; color: #DC2626; margin-bottom: 12px; display: none; }
+    .modal-footer { display: flex; gap: 8px; justify-content: flex-end; }
+
+    .spinner {
+      display: inline-block; width: 14px; height: 14px;
+      border: 2px solid #fff; border-top-color: transparent;
+      border-radius: 50%; animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── 정보 칩 ── */
+    .info-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+    .chip {
+      font-size: 12px; padding: 4px 12px; border-radius: 10px;
+      font-weight: 600;
+    }
+    .chip-blue { background: #EFF6FF; color: #2563EB; }
+    .chip-green { background: #F0FDF4; color: #16A34A; }
+    .chip-yellow { background: #FEF9C3; color: #854D0E; }
+    .chip-red { background: #FEF2F2; color: #DC2626; }
+  </style>
+</head>
+<body>
+
+<!-- 상단 바 -->
+<div class="topbar">
+  <div class="topbar-logo">🔒 SecureFace<span>-RX</span></div>
+  <nav class="topbar-nav">
+    <a href="/">실시간 모니터링</a>
+    <a href="/assets" class="active">보호 자산</a>
+    <a href="/employees">사원 관리</a>
+    <a href="/register">사원 등록</a>
+  </nav>
+</div>
+
+<div class="page">
+  <!-- 청크 목록 -->
+  <div class="panel-list">
+    <div class="panel-list-header">
+      녹화 청크
+      <span class="chunk-count" id="chunkCount">로딩 중...</span>
+    </div>
+    <div id="chunkList"></div>
+  </div>
+
+  <!-- 상세 패널 -->
+  <div class="panel-detail" id="detailPanel">
+    <div class="detail-placeholder">
+      <div class="ph-icon">📂</div>
+      <div class="ph-text">좌측에서 청크를 선택하세요</div>
+    </div>
+  </div>
+</div>
+
+<!-- 비밀번호 모달 (SCR-005 / MOD-001) -->
+<div class="modal-backdrop" id="pwModal">
+  <div class="modal">
+    <div class="modal-title">🔑 복원 인증</div>
+    <div class="modal-desc">프레임 <strong id="modalFrameId"></strong>의 익명화를 복원하려면<br>PSF 비밀번호를 입력하세요.</div>
+    <input type="password" class="modal-input" id="pwInput" placeholder="비밀번호 입력" />
+    <div class="modal-error" id="modalError">비밀번호가 올바르지 않거나 복원에 실패했습니다.</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">취소</button>
+      <button class="btn btn-primary" id="restoreBtn" onclick="doRestore()">
+        <span id="restoreBtnText">복원</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let chunks = [];
+  let selectedChunk = null;
+  let selectedFrame = null;
+
+  // ── 청크 목록 로드 ──
+  async function loadChunks() {
+    try {
+      const data = await fetch('/api/assets').then(r => r.json());
+      chunks = data;
+      renderChunkList();
+    } catch {
+      document.getElementById('chunkCount').textContent = '오류';
+    }
+  }
+
+  function renderChunkList() {
+    const el = document.getElementById('chunkList');
+    document.getElementById('chunkCount').textContent = chunks.length + '개';
+    if (chunks.length === 0) {
+      el.innerHTML = `<div class="empty-state">
+        <div class="empty-icon">📭</div>
+        <div>아직 녹화된 청크가 없습니다.<br>카메라 활성화 후 5초마다 저장됩니다.</div>
+      </div>`;
+      return;
+    }
+    el.innerHTML = chunks.map((c, i) => `
+      <div class="chunk-item ${selectedChunk === c.chunk_id ? 'selected' : ''}" onclick="selectChunk('${c.chunk_id}', ${i})">
+        ${c.has_thumb
+          ? `<img class="chunk-thumb" src="/recordings/${c.chunk_id}/thumb?t=${Date.now()}" alt="thumb" onerror="this.style.display='none'">`
+          : `<div class="chunk-thumb-ph">📷</div>`}
+        <div class="chunk-info">
+          <div class="chunk-id">${c.chunk_id}</div>
+          <div class="chunk-meta">${c.frame_count ?? 0}프레임 · 얼굴 ${c.total_faces ?? 0}건</div>
+          <span class="chunk-badge ${(c.total_faces ?? 0) > 0 ? 'faces' : ''}">
+            ${(c.total_faces ?? 0) > 0 ? '익명화 포함' : '얼굴 없음'}
+          </span>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // ── 청크 선택 → 상세 로드 ──
+  async function selectChunk(chunkId, idx) {
+    selectedChunk = chunkId;
+    selectedFrame = null;
+    document.querySelectorAll('.chunk-item').forEach((el, i) => {
+      el.classList.toggle('selected', i === idx);
+    });
+    document.getElementById('detailPanel').innerHTML = `
+      <div class="detail-placeholder"><div class="ph-icon">⏳</div><div class="ph-text">로딩 중...</div></div>`;
+
+    try {
+      const d = await fetch(`/api/assets/${chunkId}`).then(r => r.json());
+      renderDetail(d);
+    } catch {
+      document.getElementById('detailPanel').innerHTML = `
+        <div class="detail-placeholder"><div class="ph-icon">⚠️</div><div class="ph-text">상세 정보를 불러오지 못했습니다.</div></div>`;
+    }
+  }
+
+  function renderDetail(d) {
+    const hasFaces = (d.total_faces ?? 0) > 0;
+    const html = `
+      <div class="detail-header">
+        <div>
+          <div class="detail-title">${d.chunk_id}</div>
+          <div class="detail-sub">시작: ${d.start_time ?? '알 수 없음'} · 마지막 업데이트: ${d.last_update ?? '-'}</div>
+        </div>
+      </div>
+      <div class="info-chips">
+        <span class="chip chip-blue">${d.frame_count ?? 0} 프레임</span>
+        <span class="chip ${hasFaces ? 'chip-yellow' : 'chip-green'}">얼굴 ${d.total_faces ?? 0}건</span>
+        ${hasFaces ? '<span class="chip chip-red">복원 가능</span>' : '<span class="chip chip-green">복원 불필요</span>'}
+      </div>
+
+      <div>
+        <div class="section-title">저장된 프레임 (클릭하여 복원)</div>
+        <div class="frame-grid" id="frameGrid">
+          ${(d.frames ?? []).map(f => `
+            <div class="frame-card" id="fc_${f.frame_id}" onclick="selectFrame('${d.chunk_id}', '${f.frame_id}', this)">
+              <img src="/recordings/${d.chunk_id}/${f.frame_id}/frame?t=${Date.now()}" alt="${f.frame_id}"
+                   onerror="this.src=''" loading="lazy">
+              <div class="frame-card-info">
+                <span class="frame-id">#${f.frame_id}</span>
+                <span class="face-count-badge ${f.face_count === 0 ? 'zero' : ''}">
+                  ${f.face_count > 0 ? f.face_count + '명' : '-'}
+                </span>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <div class="restore-panel" id="restoreResult" style="display:none">
+        <div class="restore-panel-title">복원 결과 (SCR-005)</div>
+        <div class="restore-img-wrap">
+          <img id="restoredImg" src="" alt="복원된 프레임">
+        </div>
+      </div>
+    `;
+    document.getElementById('detailPanel').innerHTML = html;
+  }
+
+  // ── 프레임 선택 → 비밀번호 모달 ──
+  function selectFrame(chunkId, frameId, el) {
+    selectedChunk = chunkId;
+    selectedFrame = frameId;
+    document.querySelectorAll('.frame-card').forEach(c => c.classList.remove('selected'));
+    el.classList.add('selected');
+    openModal(frameId);
+  }
+
+  // ── 비밀번호 모달 ──
+  function openModal(frameId) {
+    document.getElementById('modalFrameId').textContent = '#' + frameId;
+    document.getElementById('pwInput').value = '';
+    document.getElementById('modalError').style.display = 'none';
+    document.getElementById('restoreBtnText').textContent = '복원';
+    document.getElementById('pwModal').classList.add('open');
+    setTimeout(() => document.getElementById('pwInput').focus(), 50);
+  }
+
+  function closeModal() {
+    document.getElementById('pwModal').classList.remove('open');
+  }
+
+  async function doRestore() {
+    const pw = document.getElementById('pwInput').value;
+    if (!pw) return;
+
+    const btn = document.getElementById('restoreBtn');
+    const txt = document.getElementById('restoreBtnText');
+    btn.disabled = true;
+    txt.innerHTML = '<span class="spinner"></span> 복원 중...';
+    document.getElementById('modalError').style.display = 'none';
+
+    try {
+      const res = await fetch('/api/restore', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          chunk_id: selectedChunk,
+          frame_id: selectedFrame,
+          password: pw,
+        }),
+      });
+      if (!res.ok) throw new Error('서버 오류');
+      const data = await res.json();
+      closeModal();
+      showRestored(data.image_base64);
+    } catch {
+      document.getElementById('modalError').style.display = 'block';
+    } finally {
+      btn.disabled = false;
+      txt.textContent = '복원';
+    }
+  }
+
+  function showRestored(b64) {
+    const panel = document.getElementById('restoreResult');
+    panel.style.display = 'block';
+    document.getElementById('restoredImg').src = b64;
+    panel.scrollIntoView({behavior: 'smooth'});
+  }
+
+  // ── 키보드 닫기 ──
+  document.getElementById('pwInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doRestore();
+    if (e.key === 'Escape') closeModal();
+  });
+  document.getElementById('pwModal').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeModal();
+  });
+
+  // ── 초기 로드 + 주기 갱신 ──
+  loadChunks();
+  setInterval(loadChunks, 10000);
+</script>
+
+</body>
+</html>
