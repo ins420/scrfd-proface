@@ -190,136 +190,50 @@ class CameraProcessor:
 
     def _loop(self, cam_id: int):
         import time
-        import queue as _queue
 
-        # FORCE_VIDEO: 카메라 탐색을 건너뛰고 바로 폴백 영상 사용
+        # FORCE_VIDEO: 카메라 대신 폴백 영상 사용
         if getattr(c, "FORCE_VIDEO", False):
             fallback = getattr(c, "VIDEO_FALLBACK", None)
             if fallback and os.path.exists(fallback):
                 print(f"[Camera] FORCE_VIDEO=True → 영상 재생: {fallback}")
                 self._video_loop(fallback)
                 return
-            print(f"[Camera] FORCE_VIDEO=True 이지만 영상 없음: {fallback}")
 
-        def _setup(cap_obj, force_mjpg: bool = False):
-            if force_mjpg:
-                cap_obj.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-            cap_obj.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            cap_obj.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            cap_obj.set(cv2.CAP_PROP_CONVERT_RGB, 1)  # YUY2→BGR 강제 변환
-
-        def _can_read(cap_obj, timeout=8.0) -> bool:
-            """
-            실제 화상 데이터(밝기 > 3)가 있는 프레임이 나오면 True.
-            warmup 때 검은 프레임은 무시하고 최대 50프레임 시도.
-            이를 통해 IR카메라·가상카메라(항상 검은색)와 실제 웹캠을 구별.
-            """
-            import queue as _q, threading as _t
-            result: "_q.Queue[bool]" = _q.Queue(1)
-
-            def _r():
-                for _ in range(50):
-                    ret, f = cap_obj.read()
-                    if ret and f is not None and float(f.mean()) > 3.0:
-                        result.put(True)
-                        return
-                result.put(False)
-
-            _t.Thread(target=_r, daemon=True).start()
-            try:
-                return result.get(timeout=timeout)
-            except _q.Empty:
-                return False
-
-        cap = None
-        found_id = -1
-
-        # MSMF는 이 PC에서 VideoCapture() 호출 자체가 무한 블로킹 → 제외
-        # DSHOW: 포맷 자동(YUY2) 우선, 그 다음 MJPG 강제
-        BACKENDS = [
-            (cv2.CAP_DSHOW, "DSHOW",      False),
-            (cv2.CAP_DSHOW, "DSHOW+MJPG", True),
-        ]
-
-        ids_to_try = [cam_id] + [i for i in range(5) if i != cam_id]
-        for idx in ids_to_try:
-            for backend, bname, mjpg in BACKENDS:
-                try:
-                    c_try = cv2.VideoCapture(idx, backend)
-                    if not c_try.isOpened():
-                        c_try.release()
-                        continue
-                    _setup(c_try, force_mjpg=mjpg)
-                    # 카메라 센서 초기화 대기 (안 하면 첫 N프레임이 검은색)
-                    time.sleep(2)
-                    print(f"[Camera] idx={idx} ({bname}) 읽기 테스트...")
-                    if _can_read(c_try):
-                        cap = c_try
-                        found_id = idx
-                        print(f"[Camera] 카메라 {idx} ({bname}) 선택됨!")
-                        break
-                    else:
-                        print(f"[Camera] idx={idx} ({bname}) 읽기 불가 → 건너뜀")
-                        c_try.release()
-                except Exception as e:
-                    print(f"[Camera] idx={idx} ({bname}) 오류: {e}")
-            if cap is not None:
-                break
-
-        if cap is None:
-            # 카메라 실패 → mp4 폴백이 있으면 영상 재생, 없으면 재연결 시도
-            fallback = getattr(c, "VIDEO_FALLBACK", None)
-            if fallback and os.path.exists(fallback):
-                print(f"[Camera] 카메라 열기 실패 → 폴백 영상 재생: {fallback}")
-                self._video_loop(fallback)
-                return
-            print("[Camera] 카메라 열기 실패 → 5초 후 재시도")
-            self._show_reconnecting()
-            time.sleep(5)
-            self._loop(cam_id)   # 재귀 재시도
+        # RealSense 카메라면 전용 루프
+        if getattr(c, "CAMERA_TYPE", "webcam") == "realsense":
+            self._realsense_loop()
             return
 
-        print(f"[Camera] 카메라 확정: {found_id}")
+        # ── 가장 기본적인 카메라 열기 ──
+        cap = cv2.VideoCapture(cam_id)
+        if not cap.isOpened():
+            print(f"[Camera] 카메라 {cam_id} 열기 실패 → 5초 후 재시도")
+            self._show_reconnecting()
+            time.sleep(5)
+            self._loop(cam_id)
+            return
 
-        # 전용 리더 스레드 시작 (cap.read 블로킹 격리)
-        frame_q = self._start_frame_reader(cap)
+        print(f"[Camera] 카메라 {cam_id} 열림")
 
-        fail_count = 0
         frame_count = 0
+        fail = 0
         while self._running:
-            try:
-                ret, frame = frame_q.get(timeout=5.0)
-            except _queue.Empty:
-                fail_count += 1
-                print(f"[Camera] 프레임 타임아웃 ({fail_count}회)")
-                if fail_count > 10:
-                    print("[Camera] 연속 타임아웃 → 5초 후 재연결 시도")
-                    cap.release()
-                    self._show_reconnecting()
-                    time.sleep(5)
-                    self._loop(cam_id)
-                    return
-                continue
-
+            ret, frame = cap.read()
             if not ret or frame is None:
-                fail_count += 1
-                print(f"[Camera] 프레임 읽기 실패 ({fail_count}회)")
-                if fail_count > 30:
-                    print("[Camera] 연속 실패 → 5초 후 재연결 시도")
+                fail += 1
+                if fail > 50:
+                    print("[Camera] 프레임 읽기 연속 실패 → 5초 후 재연결")
                     cap.release()
                     self._show_reconnecting()
                     time.sleep(5)
                     self._loop(cam_id)
                     return
-                time.sleep(0.05)
                 continue
 
-            fail_count = 0
+            fail = 0
             frame_count += 1
             if frame_count == 1:
                 print(f"[Camera] 첫 프레임 수신 {frame.shape}")
-                cv2.imwrite("debug_raw_frame.jpg", frame)
-                print("[Camera] debug_raw_frame.jpg 저장됨 (카메라 진단용)")
 
             frame = cv2.flip(frame, 1)
             try:
@@ -327,10 +241,6 @@ class CameraProcessor:
             except Exception as e:
                 print(f"[Camera] _process 오류 (건너뜀): {e}")
                 emp, unk = 0, 0
-
-            # 화면이 검은지 확인용 — 항상 우상단에 프레임 번호 표시
-            cv2.putText(frame, f"F{frame_count}", (frame.shape[1]-60, 22),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
             with self._stats_lock:
                 self._stats["employee_count"] = emp
@@ -343,6 +253,71 @@ class CameraProcessor:
 
         cap.release()
         print(f"[Camera] 카메라 {cam_id} 종료")
+
+    def _realsense_loop(self):
+        """
+        Intel RealSense (D455 등) 컬러 스트림으로 프레임을 받아 처리.
+        cv2.VideoCapture 대신 pyrealsense2 파이프라인 사용.
+        """
+        import time
+        try:
+            import pyrealsense2 as rs
+        except ImportError:
+            print("[Camera] pyrealsense2 미설치 → 'pip install pyrealsense2'")
+            self._show_reconnecting()
+            return
+
+        W = getattr(c, "REALSENSE_WIDTH", 640)
+        H = getattr(c, "REALSENSE_HEIGHT", 480)
+        FPS = getattr(c, "REALSENSE_FPS", 30)
+
+        pipeline = rs.pipeline()
+        cfg = rs.config()
+        cfg.enable_stream(rs.stream.color, W, H, rs.format.bgr8, FPS)
+
+        try:
+            pipeline.start(cfg)
+        except Exception as e:
+            print(f"[Camera] RealSense 시작 실패: {e} → 5초 후 재시도")
+            self._show_reconnecting()
+            time.sleep(5)
+            self._realsense_loop()
+            return
+
+        print(f"[Camera] RealSense 시작 ({W}x{H} @ {FPS}fps)")
+        frame_count = 0
+        try:
+            while self._running:
+                try:
+                    frames = pipeline.wait_for_frames(2000)  # 2초 타임아웃
+                except Exception:
+                    continue
+                color = frames.get_color_frame()
+                if not color:
+                    continue
+
+                frame = np.asanyarray(color.get_data())  # HWC BGR uint8
+                frame_count += 1
+                if frame_count == 1:
+                    print(f"[Camera] RealSense 첫 프레임 {frame.shape}")
+
+                try:
+                    frame, emp, unk = self._process(frame)
+                except Exception as e:
+                    print(f"[Camera] _process 오류 (건너뜀): {e}")
+                    emp, unk = 0, 0
+
+                with self._stats_lock:
+                    self._stats["employee_count"] = emp
+                    self._stats["unknown_count"] = unk
+
+                ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if ok:
+                    with self._frame_lock:
+                        self._latest_jpeg = buf.tobytes()
+        finally:
+            pipeline.stop()
+            print("[Camera] RealSense 종료")
 
     def _video_loop(self, video_path: str):
         """
