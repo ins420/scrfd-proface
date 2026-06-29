@@ -81,10 +81,15 @@ INN_CHECKPOINT = f"checkpoints/{CHECKPOINT_ID}.pth"
 # ArcFace 코사인 유사도 임계값
 MATCH_THRESHOLD = 0.45
 
-# 카메라 종류: "webcam"(cv2.VideoCapture) 또는 "realsense"(Intel RealSense D455 등)
-CAMERA_TYPE = "realsense"
+# 카메라 종류: "webcam"(cv2.VideoCapture) 또는 "realsense"(pyrealsense2)
+# RealSense D455도 UVC 장치라 OpenCV(webcam)로 컬러 스트림을 받을 수 있음.
+CAMERA_TYPE = "webcam"
 
-# RealSense 컬러 스트림 설정
+# 카메라 인덱스. RealSense는 여러 /dev/videoN 중 컬러 노드를 골라야 함.
+# scan_camera.py 로 어느 인덱스가 컬러 영상을 주는지 확인 후 지정.
+CAMERA_INDEX = 0
+
+# RealSense(pyrealsense2 사용 시) 컬러 스트림 설정
 REALSENSE_WIDTH = 640
 REALSENSE_HEIGHT = 480
 REALSENSE_FPS = 30

@@ -78,7 +78,7 @@ async def lifespan(app: FastAPI):
     global camera, recorder
     _init_db()
     camera = CameraProcessor()
-    camera.start(cam_id=0)
+    camera.start(cam_id=getattr(c, "CAMERA_INDEX", 0))
     recorder = PSFRecorder(camera, interval_sec=getattr(c, "RECORD_INTERVAL", 5))
     recorder.start()
     yield
