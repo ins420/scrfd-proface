@@ -64,7 +64,7 @@
         
 		<div id="instructionText">📷 1단계: 카메라의 정면을 쳐다보세요</div>
 
-		<video id="video" width="640" height="480" autoplay></video>
+		<img id="video" width="640" height="480" alt="카메라" style="border:3px solid #7289da; border-radius:10px; margin-bottom:20px; background:#000;">
 		<canvas id="canvas" width="640" height="480" style="display:none;"></canvas>
         
 		<div class="controls">
@@ -108,10 +108,15 @@
 			}
 		}
 
+		// 서버(RealSense) 카메라 원본 스냅샷을 폴링해서 표시
 		function startCamera() {
-			navigator.mediaDevices.getUserMedia({ video: true })
-				.then(stream => { video.srcObject = stream; })
-				.catch(err => { alert("카메라 권한을 허용해주세요!"); });
+			function refresh() {
+				const next = new Image();
+				next.onload = () => { video.src = next.src; };
+				next.src = '/snapshot/raw?t=' + Date.now();
+			}
+			refresh();
+			setInterval(refresh, 100);
 		}
 
 		// [3~5단계] 사진 촬영 및 서버 판별 로직
@@ -122,17 +127,14 @@
 			// [2단계] 이름 입력 검증
 			if (!name) { alert("이름을 먼저 입력해주세요!"); return; }
 
-			const context = canvas.getContext('2d');
-			context.drawImage(video, 0, 0, canvas.width, canvas.height);
-			const imageData = canvas.toDataURL('image/jpeg');
-
 			statusMessage.style.color = "white";
 			statusMessage.innerText = "서버로 전송 중... 판별 대기...";
 
-			fetch('http://127.0.0.1:8000/api/register', {
+			// 서버(RealSense) 카메라의 현재 원본 프레임으로 등록
+			fetch('/api/register_capture', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ name: name, group: group, image_base64: imageData })
+				body: JSON.stringify({ name: name, group: group })
 			})
 			.then(response => response.json())
 			.then(data => {

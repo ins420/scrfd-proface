@@ -143,6 +143,19 @@ async def snapshot_cam0():
         headers={"Cache-Control": "no-cache, no-store"},
     )
 
+# ── 등록용 원본 스냅샷 (익명화 전) ──────────────────────────────────────
+@app.get("/snapshot/raw")
+async def snapshot_raw():
+    jpeg = camera.get_raw_jpeg() if camera else None
+    if jpeg is None:
+        raise HTTPException(status_code=503, detail="카메라 준비 중")
+    return Response(
+        content=jpeg,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-cache, no-store"},
+    )
+
+
 # ── MJPEG 스트리밍 (호환 브라우저용, 유지) ───────────────────────────────
 @app.get("/stream/cam_0")
 async def stream_cam0():
@@ -220,63 +233,86 @@ class RegisterData(BaseModel):
     image_base64: str
 
 
+class RegisterCapture(BaseModel):
+    name: str
+    group: str
+
+
+def _do_register(frame, name: str, group: str) -> dict:
+    """단일 프레임으로 얼굴 탐지 → 각도 판별 → DB 등록."""
+    if frame is None:
+        return {"status": "error", "message": "❌ 카메라 프레임이 없습니다."}
+
+    detector = camera.detector
+    recognizer = camera.recognizer
+
+    bboxes, kpss = detector.detect(frame, max_num=1, metric="default")
+    if bboxes is None or len(bboxes) == 0:
+        return {"status": "error", "message": "❌ 얼굴을 찾을 수 없습니다."}
+
+    x1, y1, x2, y2 = bboxes[0, :4].astype(int).tolist()
+    lm = kpss[0]
+
+    # 측면 판별 (눈-코 거리 비율)
+    le, re, nose = lm[0], lm[1], lm[2]
+    d_left = np.linalg.norm(le - nose)
+    d_right = np.linalg.norm(re - nose)
+    ratio = max(d_left, d_right) / (min(d_left, d_right) + 1e-5)
+    eye_dist = np.linalg.norm(le - re)
+    is_side = ratio > 1.5 or (eye_dist / (x2 - x1 + 1e-5)) < 0.25
+
+    aligned = face_align.norm_crop(frame, landmark=lm, image_size=112)
+    emb = recognizer.get_feat(aligned)
+    if emb is None:
+        return {"status": "error", "message": "❌ 임베딩 추출 실패"}
+
+    if not is_side:
+        tag, fname = "정면", f"{name}_정면.jpg"
+    else:
+        if d_left < d_right:
+            tag, fname = "좌측면", f"{name}_측면1(좌).jpg"
+        else:
+            tag, fname = "우측면", f"{name}_측면2(우).jpg"
+
+    fpath = os.path.join(IMAGE_DIR, fname)
+    cv2.imwrite(fpath, frame)
+
+    conn = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
+    conn.execute(
+        "INSERT INTO users (name, auth_group, image_path, vector) VALUES (?,?,?,?)",
+        (f"{name}_{tag}", group, fpath, emb),
+    )
+    conn.commit()
+    conn.close()
+
+    camera.reload_db()
+    return {"status": "success", "message": f"✅ [{name}] {tag} 등록 성공!"}
+
+
 @app.post("/api/register")
 async def api_register(data: RegisterData):
+    """브라우저가 캡처한 base64 이미지로 등록 (기존 호환)."""
     try:
         if camera is None:
             return {"status": "error", "message": "서버 초기화 중입니다. 잠시 후 시도하세요."}
-
-        detector = camera.detector
-        recognizer = camera.recognizer
-
         _, encoded = data.image_base64.split(",", 1)
         frame = cv2.imdecode(
             np.frombuffer(base64.b64decode(encoded), np.uint8),
             cv2.IMREAD_COLOR,
         )
+        return _do_register(frame, data.name, data.group)
+    except Exception as e:
+        return {"status": "error", "message": f"서버 오류: {e}"}
 
-        bboxes, kpss = detector.detect(frame, max_num=1, metric="default")
-        if bboxes is None or len(bboxes) == 0:
-            return {"status": "error", "message": "❌ 얼굴을 찾을 수 없습니다."}
 
-        x1, y1, x2, y2 = bboxes[0, :4].astype(int).tolist()
-        lm = kpss[0]
-
-        # 측면 판별 (눈-코 거리 비율)
-        le, re, nose = lm[0], lm[1], lm[2]
-        d_left = np.linalg.norm(le - nose)
-        d_right = np.linalg.norm(re - nose)
-        ratio = max(d_left, d_right) / (min(d_left, d_right) + 1e-5)
-        eye_dist = np.linalg.norm(le - re)
-        is_side = ratio > 1.5 or (eye_dist / (x2 - x1 + 1e-5)) < 0.25
-
-        aligned = face_align.norm_crop(frame, landmark=lm, image_size=112)
-        emb = recognizer.get_feat(aligned)
-        if emb is None:
-            return {"status": "error", "message": "❌ 임베딩 추출 실패"}
-
-        if not is_side:
-            tag, fname = "정면", f"{data.name}_정면.jpg"
-        else:
-            if d_left < d_right:
-                tag, fname = "좌측면", f"{data.name}_측면1(좌).jpg"
-            else:
-                tag, fname = "우측면", f"{data.name}_측면2(우).jpg"
-
-        fpath = os.path.join(IMAGE_DIR, fname)
-        cv2.imwrite(fpath, frame)
-
-        conn = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
-        conn.execute(
-            "INSERT INTO users (name, auth_group, image_path, vector) VALUES (?,?,?,?)",
-            (f"{data.name}_{tag}", data.group, fpath, emb),
-        )
-        conn.commit()
-        conn.close()
-
-        camera.reload_db()
-        return {"status": "success", "message": f"✅ [{data.name}] {tag} 등록 성공!"}
-
+@app.post("/api/register_capture")
+async def api_register_capture(data: RegisterCapture):
+    """서버(RealSense) 카메라의 현재 원본 프레임으로 등록."""
+    try:
+        if camera is None:
+            return {"status": "error", "message": "서버 초기화 중입니다. 잠시 후 시도하세요."}
+        frame = camera.capture_raw_frame()
+        return _do_register(frame, data.name, data.group)
     except Exception as e:
         return {"status": "error", "message": f"서버 오류: {e}"}
 

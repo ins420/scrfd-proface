@@ -109,6 +109,7 @@ class CameraProcessor:
 
         self._frame_lock = threading.Lock()
         self._latest_jpeg: bytes | None = None
+        self._latest_raw_jpeg: bytes | None = None  # 익명화 전 원본 (등록용)
 
         self._tiles_lock = threading.Lock()
         self._latest_tiles: list = []   # [{"tile_f32": ndarray, "crop_box": list}]
@@ -138,6 +139,19 @@ class CameraProcessor:
     def get_jpeg(self) -> bytes | None:
         with self._frame_lock:
             return self._latest_jpeg
+
+    def get_raw_jpeg(self) -> bytes | None:
+        """익명화 전 원본 프레임 (사원 등록용)."""
+        with self._frame_lock:
+            return self._latest_raw_jpeg
+
+    def capture_raw_frame(self) -> "np.ndarray | None":
+        """현재 원본 프레임을 디코딩해 ndarray로 반환 (등록 처리용)."""
+        jpeg = self.get_raw_jpeg()
+        if jpeg is None:
+            return None
+        arr = np.frombuffer(jpeg, np.uint8)
+        return cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
     def get_stats(self) -> dict:
         with self._stats_lock:
@@ -236,6 +250,11 @@ class CameraProcessor:
                 print(f"[Camera] 첫 프레임 수신 {frame.shape}")
 
             frame = cv2.flip(frame, 1)
+            # 익명화 전 원본 저장 (등록용)
+            _okr, _bufr = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            if _okr:
+                with self._frame_lock:
+                    self._latest_raw_jpeg = _bufr.tobytes()
             try:
                 frame, emp, unk = self._process(frame)
             except Exception as e:
@@ -301,6 +320,11 @@ class CameraProcessor:
                 if frame_count == 1:
                     print(f"[Camera] RealSense 첫 프레임 {frame.shape}")
 
+                # 익명화 전 원본 저장 (등록용)
+                _okr, _bufr = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                if _okr:
+                    with self._frame_lock:
+                        self._latest_raw_jpeg = _bufr.tobytes()
                 try:
                     frame, emp, unk = self._process(frame)
                 except Exception as e:
