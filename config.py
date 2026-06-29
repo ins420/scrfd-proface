@@ -81,6 +81,10 @@ INN_CHECKPOINT = f"checkpoints/{CHECKPOINT_ID}.pth"
 # ArcFace 코사인 유사도 임계값
 MATCH_THRESHOLD = 0.45
 
+# True면 내부인(등록 사원)도 익명화 (전원 보호, 권한자만 복원).
+# False면 외부인만 익명화하고 내부인은 신원 표시.
+ANONYMIZE_ALL = True
+
 # 카메라 종류: "webcam"(cv2.VideoCapture) 또는 "realsense"(pyrealsense2)
 # RealSense D455도 UVC 장치라 OpenCV(webcam)로 컬러 스트림을 받을 수 있음.
 CAMERA_TYPE = "webcam"

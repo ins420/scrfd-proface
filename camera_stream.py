@@ -462,6 +462,12 @@ class CameraProcessor:
 
             if name == "Unknown":
                 unk += 1
+            else:
+                emp += 1
+
+            # ANONYMIZE_ALL=True면 내부인도 익명화, 아니면 외부인만
+            anonymize_all = getattr(c, "ANONYMIZE_ALL", False)
+            if name == "Unknown" or anonymize_all:
                 if self._anonymizer is not None:
                     try:
                         frame, tile_f32, crop_box = self._anonymizer.protect_roi(
@@ -473,8 +479,6 @@ class CameraProcessor:
                         frame = self._mosaic(frame, x1, y1, x2, y2)
                 else:
                     frame = self._mosaic(frame, x1, y1, x2, y2)
-            else:
-                emp += 1
 
             frame = self._draw(frame, x1, y1, x2, y2, name, group, sim)
 
