@@ -229,6 +229,7 @@ class CameraProcessor:
 
         print(f"[Camera] 카메라 {cam_id} 열림")
 
+        every_n = max(1, getattr(c, "PROCESS_EVERY_N", 1))
         frame_count = 0
         fail = 0
         while self._running:
@@ -250,11 +251,17 @@ class CameraProcessor:
                 print(f"[Camera] 첫 프레임 수신 {frame.shape}")
 
             frame = cv2.flip(frame, 1)
-            # 익명화 전 원본 저장 (등록용)
+            # 익명화 전 원본 저장 (등록용) — 매 프레임 갱신
             _okr, _bufr = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
             if _okr:
                 with self._frame_lock:
                     self._latest_raw_jpeg = _bufr.tobytes()
+
+            # N프레임마다만 무거운 처리(탐지/인식/INN) 수행
+            if frame_count % every_n != 0:
+                continue
+
+            frame = self._maybe_downscale(frame)
             try:
                 frame, emp, unk = self._process(frame)
             except Exception as e:
@@ -304,6 +311,7 @@ class CameraProcessor:
             return
 
         print(f"[Camera] RealSense 시작 ({W}x{H} @ {FPS}fps)")
+        every_n = max(1, getattr(c, "PROCESS_EVERY_N", 1))
         frame_count = 0
         try:
             while self._running:
@@ -320,11 +328,17 @@ class CameraProcessor:
                 if frame_count == 1:
                     print(f"[Camera] RealSense 첫 프레임 {frame.shape}")
 
-                # 익명화 전 원본 저장 (등록용)
+                # 익명화 전 원본 저장 (등록용) — 매 프레임
                 _okr, _bufr = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
                 if _okr:
                     with self._frame_lock:
                         self._latest_raw_jpeg = _bufr.tobytes()
+
+                # N프레임마다만 무거운 처리
+                if frame_count % every_n != 0:
+                    continue
+
+                frame = self._maybe_downscale(frame)
                 try:
                     frame, emp, unk = self._process(frame)
                 except Exception as e:
@@ -442,6 +456,14 @@ class CameraProcessor:
         return out
 
     # ── 프레임 처리 ───────────────────────────────────────────────────────
+
+    def _maybe_downscale(self, frame: np.ndarray) -> np.ndarray:
+        """PROCESS_WIDTH 설정 시 처리 속도를 위해 프레임 축소."""
+        pw = getattr(c, "PROCESS_WIDTH", 0)
+        if pw and frame.shape[1] > pw:
+            scale = pw / frame.shape[1]
+            frame = cv2.resize(frame, (pw, int(frame.shape[0] * scale)))
+        return frame
 
     def _process(self, frame: np.ndarray) -> tuple[np.ndarray, int, int]:
         bboxes, kpss = self.detector.detect(frame, max_num=0, metric="default")

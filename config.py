@@ -85,6 +85,13 @@ MATCH_THRESHOLD = 0.45
 # False면 외부인만 익명화하고 내부인은 신원 표시.
 ANONYMIZE_ALL = True
 
+# N프레임마다 1번만 탐지/인식/익명화 처리 (라즈베리파이 등 저사양 가속).
+# 1=매 프레임(느림), 3~5=빠름. 클수록 부드럽지만 반응이 둔해짐.
+PROCESS_EVERY_N = 3
+
+# 처리 전 프레임 가로 해상도 축소(px). 0이면 원본. 탐지 속도↑.
+PROCESS_WIDTH = 0
+
 # 카메라 종류: "webcam"(cv2.VideoCapture) 또는 "realsense"(pyrealsense2)
 # RealSense D455도 UVC 장치라 OpenCV(webcam)로 컬러 스트림을 받을 수 있음.
 CAMERA_TYPE = "webcam"
