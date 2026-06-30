@@ -90,10 +90,27 @@ class CameraProcessor:
 
     def __init__(self):
         print("[CameraProcessor] 모델 로드 중...")
-        fa = FaceAnalysis(name="buffalo_s", providers=["CPUExecutionProvider"])
-        fa.prepare(ctx_id=-1, det_thresh=0.6)
-        self.detector = fa.models["detection"]
-        self.recognizer = fa.models["recognition"]
+        use_hailo = getattr(c, "USE_HAILO", False)
+        if use_hailo:
+            try:
+                from hailo_infer import HAILO_AVAILABLE, HailoSCRFD, HailoArcFace
+                if not HAILO_AVAILABLE:
+                    raise RuntimeError("hailo_platform 미설치")
+                self.detector = HailoSCRFD(
+                    c.SCRFD_HEF_PATH,
+                    conf_thresh=getattr(c, "HAILO_DET_THRESH", 0.5),
+                )
+                self.recognizer = HailoArcFace(c.ARCFACE_HEF_PATH)
+                print("[CameraProcessor] ⚡ Hailo-8L 가속 사용 (SCRFD+ArcFace)")
+            except Exception as e:
+                print(f"[CameraProcessor] Hailo 사용 불가({e}) → insightface 폴백")
+                use_hailo = False
+        if not use_hailo:
+            fa = FaceAnalysis(name="buffalo_s", providers=["CPUExecutionProvider"])
+            fa.prepare(ctx_id=-1, det_thresh=0.6)
+            self.detector = fa.models["detection"]
+            self.recognizer = fa.models["recognition"]
+            print("[CameraProcessor] insightface(CPU) 사용")
 
         if c.INN_CHECKPOINT:
             self._anonymizer = INNAnonymizer(checkpoint_path=c.INN_CHECKPOINT)

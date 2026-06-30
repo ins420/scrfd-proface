@@ -81,6 +81,14 @@ INN_CHECKPOINT = f"checkpoints/{CHECKPOINT_ID}.pth"
 # ArcFace 코사인 유사도 임계값
 MATCH_THRESHOLD = 0.45
 
+# Hailo-8L 가속: SCRFD 탐지 + ArcFace 인식을 Hailo에서 실행.
+# True여도 hailo_platform이 없으면 자동으로 insightface(CPU)로 폴백.
+# ⚠️ Hailo ArcFace는 임베딩 공간이 달라 전환 시 재등록 필요.
+USE_HAILO = True
+SCRFD_HEF_PATH = "/usr/share/hailo-models/scrfd_2.5g_h8l.hef"
+ARCFACE_HEF_PATH = "/usr/share/hailo-models/arcface_mobilefacenet.hef"
+HAILO_DET_THRESH = 0.5
+
 # True면 내부인(등록 사원)도 익명화 (전원 보호, 권한자만 복원).
 # False면 외부인만 익명화하고 내부인은 신원 표시.
 ANONYMIZE_ALL = True
