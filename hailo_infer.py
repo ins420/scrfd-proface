@@ -68,12 +68,23 @@ def _nms(dets, scores, thresh):
 
 # ── HailoRT 단일 네트워크 래퍼 ─────────────────────────────────────────────
 
+# Hailo-8L은 물리 디바이스 1개 → 모든 모델이 하나의 VDevice를 공유해야 함.
+_SHARED_VDEVICE = None
+
+
+def _get_vdevice():
+    global _SHARED_VDEVICE
+    if _SHARED_VDEVICE is None:
+        _SHARED_VDEVICE = VDevice()
+    return _SHARED_VDEVICE
+
+
 class _HailoNet:
     def __init__(self, hef_path: str):
         if not HAILO_AVAILABLE:
             raise RuntimeError(f"hailo_platform import 실패: {_IMPORT_ERR}")
         self.hef = HEF(hef_path)
-        self.target = VDevice()
+        self.target = _get_vdevice()  # 공유 VDevice
         cfg = ConfigureParams.create_from_hef(
             self.hef, interface=HailoStreamInterface.PCIe
         )
