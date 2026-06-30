@@ -466,12 +466,16 @@ class CameraProcessor:
         return frame
 
     def _process(self, frame: np.ndarray) -> tuple[np.ndarray, int, int]:
+        """
+        실시간 디스플레이용 처리. REALTIME_ANON="mosaic"이면 INN 대신
+        가벼운 모자이크로 익명화(빠름). INN 보호본은 recorder가 별도 생성.
+        """
         bboxes, kpss = self.detector.detect(frame, max_num=0, metric="default")
         if bboxes is None or len(bboxes) == 0:
-            with self._tiles_lock:
-                self._latest_tiles = []
             return frame, 0, 0
 
+        realtime = getattr(c, "REALTIME_ANON", "inn")
+        anonymize_all = getattr(c, "ANONYMIZE_ALL", False)
         emp, unk = 0, 0
         tiles = []
         for i in range(bboxes.shape[0]):
@@ -487,10 +491,11 @@ class CameraProcessor:
             else:
                 emp += 1
 
-            # ANONYMIZE_ALL=True면 내부인도 익명화, 아니면 외부인만
-            anonymize_all = getattr(c, "ANONYMIZE_ALL", False)
             if name == "Unknown" or anonymize_all:
-                if self._anonymizer is not None:
+                if realtime == "mosaic":
+                    # 실시간: 가벼운 모자이크 (INN 안 씀 → 빠름)
+                    frame = self._mosaic(frame, x1, y1, x2, y2)
+                elif self._anonymizer is not None:
                     try:
                         frame, tile_f32, crop_box = self._anonymizer.protect_roi(
                             frame, [x1, y1, x2, y2], self._password
@@ -504,9 +509,44 @@ class CameraProcessor:
 
             frame = self._draw(frame, x1, y1, x2, y2, name, group, sim)
 
+        # INN 모드일 때만 디스플레이 타일을 보관(녹화 호환). 모자이크면 빈 값.
         with self._tiles_lock:
             self._latest_tiles = tiles
         return frame, emp, unk
+
+    def make_protected(self, frame: np.ndarray) -> tuple[np.ndarray, list]:
+        """
+        녹화 전용: 원본 프레임을 INN 보호본으로 변환 (무거움, N초에 1번 호출).
+        Returns: (보호본 프레임, [{"tile_f32", "crop_box"}, ...])
+        """
+        bboxes, kpss = self.detector.detect(frame, max_num=0, metric="default")
+        if bboxes is None or len(bboxes) == 0:
+            return frame, []
+
+        anonymize_all = getattr(c, "ANONYMIZE_ALL", False)
+        out = frame
+        tiles = []
+        for i in range(bboxes.shape[0]):
+            x1, y1, x2, y2 = bboxes[i, :4].astype(int)
+            lm = kpss[i]
+            aligned = face_align.norm_crop(out, landmark=lm, image_size=112)
+            emb = self.recognizer.get_feat(aligned)
+            name, group, sim = self._match(emb)
+
+            if name == "Unknown" or anonymize_all:
+                if self._anonymizer is not None:
+                    try:
+                        out, tile_f32, crop_box = self._anonymizer.protect_roi(
+                            out, [x1, y1, x2, y2], self._password
+                        )
+                        tiles.append({"tile_f32": tile_f32, "crop_box": crop_box})
+                    except Exception as e:
+                        print(f"[INN] make_protected 실패 → 모자이크: {e}")
+                        out = self._mosaic(out, x1, y1, x2, y2)
+                else:
+                    out = self._mosaic(out, x1, y1, x2, y2)
+            out = self._draw(out, x1, y1, x2, y2, name, group, sim)
+        return out, tiles
 
     def _match(self, emb) -> tuple[str, str, float]:
         best_name, best_group, best_sim = "Unknown", "비허가", -1.0

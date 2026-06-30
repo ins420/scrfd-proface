@@ -112,11 +112,13 @@ class PSFRecorder:
         while self._running:
             time.sleep(self._interval)
 
-            snap = self._camera.get_recording_snapshot()
-            if snap is None:
+            # 원본 프레임을 가져와 이 순간만 INN 보호본 생성 (무거운 처리, N초에 1번)
+            raw = self._camera.capture_raw_frame()
+            if raw is None:
                 continue
-            # 익명화된 얼굴(외부인)이 있을 때만 저장
-            if not snap.get("tiles"):
+            anon_frame, tiles = self._camera.make_protected(raw)
+            # 익명화 대상 얼굴(보호본 타일)이 있을 때만 저장
+            if not tiles:
                 continue
 
             chunk = self._chunk_dir()
@@ -124,14 +126,12 @@ class PSFRecorder:
             snap_dir = os.path.join(chunk, f"{frame_id:06d}")
             os.makedirs(snap_dir, exist_ok=True)
 
-            # frame.jpg 저장
-            arr = np.frombuffer(snap["jpeg"], np.uint8)
-            img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            # frame.jpg = INN 보호본 프레임
             frame_path = os.path.join(snap_dir, "frame.jpg")
-            cv2.imwrite(frame_path, img)
+            cv2.imwrite(frame_path, anon_frame)
 
             # 타일 저장
-            for i, td in enumerate(snap.get("tiles", [])):
+            for i, td in enumerate(tiles):
                 npy_path = os.path.join(snap_dir, f"face_{i}.npy")
                 box_path = os.path.join(snap_dir, f"face_{i}_box.json")
                 np.save(npy_path, td["tile_f32"])
@@ -146,7 +146,7 @@ class PSFRecorder:
                 "total_faces": 0,
             }
             m["frame_count"] += 1
-            m["total_faces"] += len(snap.get("tiles", []))
+            m["total_faces"] += len(tiles)
             m["last_update"] = datetime.now().isoformat()
             _save_json(mpath, m)
 
