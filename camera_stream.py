@@ -218,7 +218,7 @@ class CameraProcessor:
             self._realsense_loop()
             return
 
-        # ── 가장 기본적인 카메라 열기 ──
+        # ── 카메라 열기 ──
         cap = cv2.VideoCapture(cam_id)
         if not cap.isOpened():
             print(f"[Camera] 카메라 {cam_id} 열기 실패 → 5초 후 재시도")
@@ -226,38 +226,49 @@ class CameraProcessor:
             time.sleep(5)
             self._loop(cam_id)
             return
+        # 버퍼 최소화 (지연 감소)
+        try:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception:
+            pass
 
         print(f"[Camera] 카메라 {cam_id} 열림")
 
+        # ── 리더 스레드: 항상 '최신' 프레임만 보관 (버퍼 누적 지연 제거) ──
+        state = {"frame": None, "run": True, "first": True}
+        rlock = threading.Lock()
+
+        def _reader():
+            while state["run"] and self._running:
+                ret, f = cap.read()
+                if not ret or f is None:
+                    continue
+                f = cv2.flip(f, 1)
+                # 등록용 원본은 매 프레임 갱신
+                _okr, _bufr = cv2.imencode(".jpg", f, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                if _okr:
+                    with self._frame_lock:
+                        self._latest_raw_jpeg = _bufr.tobytes()
+                with rlock:
+                    state["frame"] = f  # 이전 미처리 프레임은 덮어씀(드롭)
+
+        threading.Thread(target=_reader, daemon=True).start()
+
         every_n = max(1, getattr(c, "PROCESS_EVERY_N", 1))
         frame_count = 0
-        fail = 0
         while self._running:
-            ret, frame = cap.read()
-            if not ret or frame is None:
-                fail += 1
-                if fail > 50:
-                    print("[Camera] 프레임 읽기 연속 실패 → 5초 후 재연결")
-                    cap.release()
-                    self._show_reconnecting()
-                    time.sleep(5)
-                    self._loop(cam_id)
-                    return
+            with rlock:
+                frame = state["frame"]
+                state["frame"] = None  # 소비 → 다음 새 프레임까지 대기
+            if frame is None:
+                time.sleep(0.005)
                 continue
 
-            fail = 0
-            frame_count += 1
-            if frame_count == 1:
+            if state["first"]:
+                state["first"] = False
                 print(f"[Camera] 첫 프레임 수신 {frame.shape}")
 
-            frame = cv2.flip(frame, 1)
-            # 익명화 전 원본 저장 (등록용) — 매 프레임 갱신
-            _okr, _bufr = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
-            if _okr:
-                with self._frame_lock:
-                    self._latest_raw_jpeg = _bufr.tobytes()
-
-            # N프레임마다만 무거운 처리(탐지/인식/INN) 수행
+            frame_count += 1
             if frame_count % every_n != 0:
                 continue
 
@@ -277,6 +288,7 @@ class CameraProcessor:
                 with self._frame_lock:
                     self._latest_jpeg = buf.tobytes()
 
+        state["run"] = False
         cap.release()
         print(f"[Camera] 카메라 {cam_id} 종료")
 
