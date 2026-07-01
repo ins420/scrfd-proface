@@ -107,11 +107,15 @@ class PSFRecorder:
 
     # ── 내부 루프 ──────────────────────────────────────────────────────────
 
-    def _chunk_dir(self) -> str:
-        """월/일/오전오후/시/10분청크 계층 폴더 경로를 만들고 반환."""
+    def _chunk_dir(self, ts: float | None = None) -> str:
+        """
+        월/일/오전오후/시/10분청크 계층 폴더 경로를 만들고 반환.
+        ts(촬영 시각)를 주면 그 시각 기준으로 청크를 분류 (recorder가
+        뒤처져 나중에 처리해도 프레임이 올바른 시간대 청크에 저장됨).
+        """
         import config as c
         mins = getattr(c, "CHUNK_MINUTES", 10)
-        now = datetime.now()
+        now = datetime.fromtimestamp(ts) if ts else datetime.now()
         month = now.strftime("%Y-%m")            # 2026-06
         day = now.strftime("%d")                 # 29
         ampm = "오전" if now.hour < 12 else "오후"
@@ -153,8 +157,8 @@ class PSFRecorder:
                 save_count = 0
                 t_report = time.time()
 
-            # 모든 프레임 저장 (얼굴 없으면 tiles=[]이고 원본 그대로)
-            chunk = self._chunk_dir()
+            # 모든 프레임 저장. 청크는 촬영 시각(ts) 기준으로 분류.
+            chunk = self._chunk_dir(ts)
             # 청크(10분)가 바뀌면 프레임 번호 리셋
             if chunk != last_chunk:
                 frame_id = 0
