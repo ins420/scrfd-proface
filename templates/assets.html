@@ -74,6 +74,24 @@
     }
     .chunk-badge.faces { background: #FEF9C3; color: #854D0E; }
 
+    /* ── 계층 트리 (월/일/오전오후/시/10분) ── */
+    .tree-folder { margin: 1px 0; }
+    .tree-folder > summary {
+      cursor: pointer; padding: 6px 12px; font-size: 13px; font-weight: 600;
+      color: #475569; list-style: none; user-select: none; border-radius: 6px;
+    }
+    .tree-folder > summary::-webkit-details-marker { display: none; }
+    .tree-folder > summary:hover { background: #F8FAFC; }
+    .tree-indent { margin-left: 12px; border-left: 1px solid #E2E8F0; padding-left: 2px; }
+    .tree-chunk {
+      padding: 8px 12px; margin: 1px 0; cursor: pointer; border-radius: 6px;
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .tree-chunk:hover { background: #F8FAFC; }
+    .tree-chunk.selected { background: #EFF6FF; border-left: 3px solid #3B82F6; }
+    .tree-chunk-time { font-size: 13px; font-weight: 600; color: #1E293B; }
+    .tree-chunk-meta { font-size: 11px; color: #64748B; }
+
     .empty-state {
       padding: 48px 20px; text-align: center;
       color: #94A3B8; font-size: 13px;
@@ -265,39 +283,73 @@
     }
   }
 
+  // "14-00" → "14:00 ~ 14:10"
+  function chunkTimeLabel(key) {
+    const p = key.split('-');
+    if (p.length !== 2) return key;
+    const h = parseInt(p[0]), m = parseInt(p[1]);
+    let eh = h, em = m + 10;
+    if (em >= 60) { em -= 60; eh += 1; }
+    const pad = n => n.toString().padStart(2, '0');
+    return `${pad(h)}:${pad(m)} ~ ${pad(eh)}:${pad(em)}`;
+  }
+
   function renderChunkList() {
     const el = document.getElementById('chunkList');
     document.getElementById('chunkCount').textContent = chunks.length + '개';
     if (chunks.length === 0) {
       el.innerHTML = `<div class="empty-state">
         <div class="empty-icon">📭</div>
-        <div>아직 녹화된 청크가 없습니다.<br>카메라 활성화 후 5초마다 저장됩니다.</div>
+        <div>아직 녹화된 청크가 없습니다.<br>카메라 활성화 후 저장됩니다.</div>
       </div>`;
       return;
     }
-    el.innerHTML = chunks.map((c, i) => `
-      <div class="chunk-item ${selectedChunk === c.chunk_id ? 'selected' : ''}" onclick="selectChunk('${c.chunk_id}', ${i})">
-        ${c.has_thumb
-          ? `<img class="chunk-thumb" src="/recordings/${c.chunk_id}/thumb?t=${Date.now()}" alt="thumb" onerror="this.style.display='none'">`
-          : `<div class="chunk-thumb-ph">📷</div>`}
-        <div class="chunk-info">
-          <div class="chunk-id">${c.chunk_id}</div>
-          <div class="chunk-meta">${c.frame_count ?? 0}프레임 · 얼굴 ${c.total_faces ?? 0}건</div>
-          <span class="chunk-badge ${(c.total_faces ?? 0) > 0 ? 'faces' : ''}">
-            ${(c.total_faces ?? 0) > 0 ? '익명화 포함' : '얼굴 없음'}
-          </span>
-        </div>
-      </div>
-    `).join('');
+
+    // chunk_id("월__일__오전오후__시__10분")를 계층 트리로 구성
+    const tree = {};
+    chunks.forEach(c => {
+      const parts = (c.chunk_id || '').split('__');
+      let node = tree;
+      parts.slice(0, -1).forEach(p => {
+        node[p] = node[p] || { __children: {} };
+        node = node[p].__children;
+      });
+      node['__leaf_' + parts[parts.length - 1]] = { __chunk: c, __key: parts[parts.length - 1] };
+    });
+
+    el.innerHTML = renderTree(tree);
+  }
+
+  function renderTree(node) {
+    let html = '';
+    for (const key in node) {
+      const val = node[key];
+      if (val.__chunk) {
+        const c = val.__chunk;
+        const faces = c.total_faces ?? 0;
+        const sel = selectedChunk === c.chunk_id ? 'selected' : '';
+        html += `
+          <div class="tree-chunk ${sel}" onclick="selectChunk('${c.chunk_id}', this)">
+            <span class="tree-chunk-time">🕐 ${chunkTimeLabel(val.__key)}</span>
+            <span class="tree-chunk-meta">${c.frame_count ?? 0}프레임 · 얼굴 ${faces}건</span>
+          </div>`;
+      } else {
+        html += `
+          <details open class="tree-folder">
+            <summary>📁 ${key}</summary>
+            <div class="tree-indent">${renderTree(val.__children)}</div>
+          </details>`;
+      }
+    }
+    return html;
   }
 
   // ── 청크 선택 → 상세 로드 ──
-  async function selectChunk(chunkId, idx) {
+  async function selectChunk(chunkId, el) {
     selectedChunk = chunkId;
     selectedFrame = null;
-    document.querySelectorAll('.chunk-item').forEach((el, i) => {
-      el.classList.toggle('selected', i === idx);
-    });
+    document.querySelectorAll('.tree-chunk').forEach(e => e.classList.remove('selected'));
+    if (el) el.classList.add('selected');
     document.getElementById('detailPanel').innerHTML = `
       <div class="detail-placeholder"><div class="ph-icon">⏳</div><div class="ph-text">로딩 중...</div></div>`;
 
