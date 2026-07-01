@@ -223,6 +223,35 @@ class CameraProcessor:
         t.start()
         return q
 
+    def _find_camera_index(self, preferred: int = 0) -> int:
+        """
+        컬러 영상(3채널, 밝기>3)이 나오는 카메라 인덱스를 자동 탐색.
+        preferred를 먼저 시도하고, 안 되면 0~8을 스캔.
+        RealSense는 depth/IR 등 여러 /dev/videoN 중 컬러 노드를 자동 선택.
+        """
+        candidates = [preferred] + [i for i in range(9) if i != preferred]
+        for idx in candidates:
+            try:
+                cap = cv2.VideoCapture(idx)
+            except Exception:
+                continue
+            if not cap.isOpened():
+                cap.release()
+                continue
+            found = False
+            for _ in range(15):
+                ret, f = cap.read()
+                if (ret and f is not None and f.ndim == 3
+                        and f.shape[2] == 3 and float(f.mean()) > 3):
+                    found = True
+                    break
+            cap.release()
+            if found:
+                print(f"[Camera] 자동 선택: 인덱스 {idx} (컬러 영상 확인)")
+                return idx
+        print(f"[Camera] 컬러 카메라 자동탐색 실패 → 인덱스 {preferred} 사용")
+        return preferred
+
     def _loop(self, cam_id: int):
         import time
 
@@ -238,6 +267,9 @@ class CameraProcessor:
         if getattr(c, "CAMERA_TYPE", "webcam") == "realsense":
             self._realsense_loop()
             return
+
+        # ── 컬러 영상이 나오는 카메라 인덱스 자동 선택 ──
+        cam_id = self._find_camera_index(cam_id)
 
         # ── 카메라 열기 ──
         cap = cv2.VideoCapture(cam_id)
