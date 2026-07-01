@@ -132,15 +132,15 @@ VIDEO_FALLBACK_FPS = 25   # 재생 속도 (원본 영상 fps에 맞춤)
 # (이 PC 카메라가 검은 프레임만 줄 때 demo.mp4로 강제하는 용도)
 FORCE_VIDEO = False
 
-# PSF 녹화 간격(초). 작을수록 복원 영상이 부드럽지만 디스크 사용 증가.
-RECORD_INTERVAL = 1
+# PSF 녹화 간격(초). 작을수록 복원 영상이 부드럽지만 INN 부하/디스크 증가.
+RECORD_INTERVAL = 0.3
 
 # 청크 길이(분). 10분 단위로 청크 폴더 생성.
 # 저장 계층: recordings/월/일/오전오후/시/10분청크
 CHUNK_MINUTES = 10
 
-# 복원 영상 재생 fps
-RESTORE_VIDEO_FPS = 5
+# 복원 영상 재생 fps (RECORD_INTERVAL과 맞추면 실제 속도로 재생)
+RESTORE_VIDEO_FPS = 3
 
 # ffmpeg 실행 파일 경로 (None이면 PATH에서 탐색).
 # 브라우저 호환 H.264 변환에 사용. winget 설치 시 PATH에 없을 수 있어 직접 지정.
