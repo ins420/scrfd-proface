@@ -159,8 +159,10 @@ class PSFRecorder:
 
             # 모든 프레임 저장. 청크는 촬영 시각(ts) 기준으로 분류.
             chunk = self._chunk_dir(ts)
-            # 청크(10분)가 바뀌면 프레임 번호 리셋
+            # 청크(10분)가 바뀌면 이전 청크를 완료 표시하고 프레임 번호 리셋
             if chunk != last_chunk:
+                if last_chunk is not None:
+                    self._mark_complete(last_chunk)
                 frame_id = 0
                 last_chunk = chunk
             frame_id += 1
@@ -194,6 +196,14 @@ class PSFRecorder:
             m["last_update"] = datetime.now().isoformat()
             _save_json(mpath, m)
 
+    def _mark_complete(self, chunk_path: str):
+        """청크의 10분이 끝나 다음 청크로 넘어갈 때 완료 표시 (복원 허용)."""
+        mpath = os.path.join(chunk_path, "manifest.json")
+        m = _load_json(mpath) or {}
+        m["complete"] = True
+        _save_json(mpath, m)
+        print(f"[Recorder] 청크 완료: {_path_to_id(chunk_path)}")
+
     # ── 공개 API ──────────────────────────────────────────────────────────
 
     def list_chunks(self) -> list[dict]:
@@ -207,6 +217,7 @@ class PSFRecorder:
             m = _load_json(os.path.join(root, "manifest.json")) or {}
             m["chunk_id"] = _path_to_id(root)
             m["has_thumb"] = _first_frame_jpg(root) is not None
+            m["complete"] = m.get("complete", False)
             result.append(m)
         result.sort(key=lambda x: x.get("chunk_id", ""), reverse=True)
         return result
@@ -218,6 +229,7 @@ class PSFRecorder:
             return None
         m = _load_json(mpath) or {}
         m["chunk_id"] = chunk_id
+        m["complete"] = m.get("complete", False)
         frames = []
         if os.path.isdir(path):
             for fname in sorted(os.listdir(path)):

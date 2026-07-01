@@ -330,8 +330,8 @@
         const sel = selectedChunk === c.chunk_id ? 'selected' : '';
         html += `
           <div class="tree-chunk ${sel}" onclick="selectChunk('${c.chunk_id}', this)">
-            <span class="tree-chunk-time">🕐 ${chunkTimeLabel(val.__key)}</span>
-            <span class="tree-chunk-meta">${c.frame_count ?? 0}프레임 · 얼굴 ${faces}건</span>
+            <span class="tree-chunk-time">🕐 ${chunkTimeLabel(val.__key)} ${c.complete ? '' : '🔴'}</span>
+            <span class="tree-chunk-meta">${c.frame_count ?? 0}프레임 · 얼굴 ${faces}건${c.complete ? '' : ' · 녹화 중'}</span>
           </div>`;
       } else {
         html += `
@@ -370,11 +370,12 @@
           <div class="detail-title">${d.chunk_id}</div>
           <div class="detail-sub">시작: ${d.start_time ?? '알 수 없음'} · 마지막 업데이트: ${d.last_update ?? '-'}</div>
         </div>
-        ${hasFaces ? `
-          <div style="display:flex; gap:8px;">
-            <button class="btn btn-ghost" onclick="openVideoModal('${d.chunk_id}')">🔓 복원(로컬)</button>
-            <button class="btn btn-primary" onclick="openGpuModal('${d.chunk_id}')">🚀 GPU 복원</button>
-          </div>` : ''}
+        ${!hasFaces ? '' : (d.complete
+          ? `<div style="display:flex; gap:8px;">
+               <button class="btn btn-ghost" onclick="openVideoModal('${d.chunk_id}')">🔓 복원(로컬)</button>
+               <button class="btn btn-primary" onclick="openGpuModal('${d.chunk_id}')">🚀 GPU 복원</button>
+             </div>`
+          : `<span class="chip chip-red">🔴 녹화 중 · 10분 완료 후 복원 가능</span>`)}
       </div>
       <div class="info-chips">
         <span class="chip chip-blue">${d.frame_count ?? 0} 프레임</span>

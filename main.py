@@ -381,10 +381,20 @@ class RestoreVideoRequest(BaseModel):
     password: str
 
 
+def _require_complete(chunk_id: str):
+    detail = recorder.get_chunk_detail(chunk_id) if recorder else None
+    if not detail or not detail.get("complete"):
+        raise HTTPException(
+            status_code=409,
+            detail="아직 완료되지 않은 청크입니다 (10분 녹화가 끝나야 복원 가능).",
+        )
+
+
 @app.post("/api/restore_video")
 async def api_restore_video(req: RestoreVideoRequest):
     if recorder is None:
         raise HTTPException(status_code=503, detail="Recorder not ready")
+    _require_complete(req.chunk_id)
     path = await asyncio.to_thread(
         recorder.restore_chunk_video, req.chunk_id, req.password
     )
@@ -428,6 +438,7 @@ def _gpu_restore_blocking(chunk_id: str) -> bytes | None:
 async def api_restore_video_gpu(req: RestoreVideoRequest):
     if not getattr(c, "MODAL_RESTORE_URL", None):
         raise HTTPException(status_code=503, detail="MODAL_RESTORE_URL 미설정")
+    _require_complete(req.chunk_id)
     data = await asyncio.to_thread(_gpu_restore_blocking, req.chunk_id)
     if data is None:
         raise HTTPException(status_code=500, detail="GPU 복원 실패")
