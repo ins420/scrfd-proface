@@ -16,6 +16,7 @@ GPU에서 INN 역변환으로 복원해 mp4를 반환한다.
 라즈베리파이 config 의 MODAL_RESTORE_URL 에 넣는다.
 """
 import modal
+from fastapi import File, UploadFile
 
 app = modal.App("securefacerx-restore")
 
@@ -39,7 +40,7 @@ image = (
 
 @app.function(gpu="a10g", image=image, timeout=1800)
 @modal.fastapi_endpoint(method="POST")
-async def restore(file):
+async def restore(file: UploadFile = File(...)):
     """
     file: 청크 폴더를 압축한 tar.gz (multipart 업로드)
     반환: 복원된 mp4 (video/mp4)
@@ -50,7 +51,6 @@ async def restore(file):
     import tarfile
     import tempfile
 
-    from fastapi import UploadFile
     from fastapi.responses import JSONResponse, Response
 
     sys.path.insert(0, "/app")
