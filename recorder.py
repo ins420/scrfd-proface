@@ -69,6 +69,19 @@ def _first_frame_jpg(chunk_path: str) -> str | None:
     return None
 
 
+# 계층 폴더(월/일/오전오후/시/10분청크)와 안전한 chunk_id 간 변환.
+# 실제 경로:  recordings/2026-06/29/오후/14시/14-00
+# chunk_id : "2026-06__29__오후__14시__14-00"  (슬래시 → __, URL 안전)
+def _path_to_id(chunk_path: str) -> str:
+    rel = os.path.relpath(chunk_path, RECORDINGS_DIR)
+    return rel.replace(os.sep, "__").replace("/", "__")
+
+
+def _id_to_path(chunk_id: str) -> str:
+    rel = chunk_id.replace("__", os.sep)
+    return os.path.join(RECORDINGS_DIR, rel)
+
+
 # ── PSFRecorder ────────────────────────────────────────────────────────────
 
 class PSFRecorder:
@@ -95,20 +108,23 @@ class PSFRecorder:
     # ── 내부 루프 ──────────────────────────────────────────────────────────
 
     def _chunk_dir(self) -> str:
+        """월/일/오전오후/시/10분청크 계층 폴더 경로를 만들고 반환."""
         import config as c
-        mins = getattr(c, "CHUNK_MINUTES", 60)
+        mins = getattr(c, "CHUNK_MINUTES", 10)
         now = datetime.now()
-        if mins >= 60:
-            stamp = now.strftime("%Y-%m-%d_%H")
-        else:
-            bucket = (now.minute // mins) * mins  # N분 단위로 내림
-            stamp = now.strftime("%Y-%m-%d_%H-") + f"{bucket:02d}"
-        path = os.path.join(RECORDINGS_DIR, stamp)
+        month = now.strftime("%Y-%m")            # 2026-06
+        day = now.strftime("%d")                 # 29
+        ampm = "오전" if now.hour < 12 else "오후"
+        hour = f"{now.hour:02d}시"               # 14시
+        bucket = (now.minute // mins) * mins     # 10분 단위 내림
+        chunk = f"{now.hour:02d}-{bucket:02d}"   # 14-00
+        path = os.path.join(RECORDINGS_DIR, month, day, ampm, hour, chunk)
         os.makedirs(path, exist_ok=True)
         return path
 
     def _loop(self):
         frame_id = 0
+        last_chunk = None
         while self._running:
             time.sleep(self._interval)
 
@@ -122,6 +138,10 @@ class PSFRecorder:
                 continue
 
             chunk = self._chunk_dir()
+            # 청크(10분)가 바뀌면 프레임 번호 리셋
+            if chunk != last_chunk:
+                frame_id = 0
+                last_chunk = chunk
             frame_id += 1
             snap_dir = os.path.join(chunk, f"{frame_id:06d}")
             os.makedirs(snap_dir, exist_ok=True)
@@ -140,7 +160,7 @@ class PSFRecorder:
             # manifest 업데이트
             mpath = os.path.join(chunk, "manifest.json")
             m = _load_json(mpath) or {
-                "chunk_id": os.path.basename(chunk),
+                "chunk_id": _path_to_id(chunk),
                 "start_time": datetime.now().isoformat(),
                 "frame_count": 0,
                 "total_faces": 0,
@@ -153,23 +173,22 @@ class PSFRecorder:
     # ── 공개 API ──────────────────────────────────────────────────────────
 
     def list_chunks(self) -> list[dict]:
-        """녹화된 청크 목록 (최신순)."""
+        """녹화된 청크 목록 (최신순). 계층 폴더를 재귀 탐색."""
         result = []
         if not os.path.exists(RECORDINGS_DIR):
             return result
-        for name in sorted(os.listdir(RECORDINGS_DIR), reverse=True):
-            path = os.path.join(RECORDINGS_DIR, name)
-            mpath = os.path.join(path, "manifest.json")
-            if not (os.path.isdir(path) and os.path.exists(mpath)):
+        for root, _dirs, files in os.walk(RECORDINGS_DIR):
+            if "manifest.json" not in files:
                 continue
-            m = _load_json(mpath) or {}
-            m["chunk_id"] = name
-            m["has_thumb"] = _first_frame_jpg(path) is not None
+            m = _load_json(os.path.join(root, "manifest.json")) or {}
+            m["chunk_id"] = _path_to_id(root)
+            m["has_thumb"] = _first_frame_jpg(root) is not None
             result.append(m)
+        result.sort(key=lambda x: x.get("chunk_id", ""), reverse=True)
         return result
 
     def get_chunk_detail(self, chunk_id: str) -> dict | None:
-        path = os.path.join(RECORDINGS_DIR, chunk_id)
+        path = _id_to_path(chunk_id)
         mpath = os.path.join(path, "manifest.json")
         if not os.path.exists(mpath):
             return None
@@ -192,7 +211,7 @@ class PSFRecorder:
         return m
 
     def get_thumb_jpeg(self, chunk_id: str) -> bytes | None:
-        path = os.path.join(RECORDINGS_DIR, chunk_id)
+        path = _id_to_path(chunk_id)
         jpg = _first_frame_jpg(path)
         if jpg is None:
             return None
@@ -200,7 +219,7 @@ class PSFRecorder:
             return f.read()
 
     def get_frame_jpeg(self, chunk_id: str, frame_id: str) -> bytes | None:
-        p = os.path.join(RECORDINGS_DIR, chunk_id, frame_id, "frame.jpg")
+        p = os.path.join(_id_to_path(chunk_id), frame_id, "frame.jpg")
         if not os.path.exists(p):
             return None
         with open(p, "rb") as f:
@@ -214,7 +233,7 @@ class PSFRecorder:
         import config as c
         from core.anonymizer import INNAnonymizer
 
-        path = os.path.join(RECORDINGS_DIR, chunk_id)
+        path = _id_to_path(chunk_id)
         if not os.path.isdir(path):
             return None
         frame_dirs = sorted(d for d in os.listdir(path) if d.isdigit())
@@ -293,7 +312,7 @@ class PSFRecorder:
         import config as c
         from core.anonymizer import INNAnonymizer
 
-        snap_dir = os.path.join(RECORDINGS_DIR, chunk_id, frame_id)
+        snap_dir = os.path.join(_id_to_path(chunk_id), frame_id)
         frame_path = os.path.join(snap_dir, "frame.jpg")
         if not os.path.exists(frame_path):
             return None

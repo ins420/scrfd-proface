@@ -135,9 +135,9 @@ FORCE_VIDEO = False
 # PSF 녹화 간격(초). 작을수록 복원 영상이 부드럽지만 디스크 사용 증가.
 RECORD_INTERVAL = 1
 
-# 청크 길이(분). 이 시간 단위로 새 청크 폴더가 생성됨.
-# 데모 안정성: 짧게(1분)면 청크당 프레임 수가 적어 복원이 빠름.
-CHUNK_MINUTES = 1
+# 청크 길이(분). 10분 단위로 청크 폴더 생성.
+# 저장 계층: recordings/월/일/오전오후/시/10분청크
+CHUNK_MINUTES = 10
 
 # 복원 영상 재생 fps
 RESTORE_VIDEO_FPS = 5
