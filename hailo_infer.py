@@ -11,8 +11,14 @@ insightface의 detector/recognizer를 대체한다.
 주의: 첫 통합이므로 라즈베리파이에서 test_hailo.py로 검증하며
 score 임계값/색공간 등을 조정해야 할 수 있다.
 """
+import threading
+
 import cv2
 import numpy as np
+
+# Hailo는 한 번에 하나의 network group만 activate 가능.
+# 여러 스레드(카메라/녹화)의 추론을 직렬화.
+_HAILO_LOCK = threading.Lock()
 
 try:
     from hailo_platform import (
@@ -101,11 +107,13 @@ class _HailoNet:
     def infer(self, img_hwc: np.ndarray) -> dict:
         """img_hwc: (H,W,3) uint8 RGB → {출력이름: (1,...) float32}"""
         data = {self.input_info.name: np.expand_dims(img_hwc, 0).astype(np.uint8)}
-        with InferVStreams(
-            self.network_group, self.input_vparams, self.output_vparams
-        ) as pipeline:
-            with self.network_group.activate(self.ng_params):
-                return pipeline.infer(data)
+        # 전역 락으로 activate 충돌 방지 (한 번에 하나의 추론만)
+        with _HAILO_LOCK:
+            with InferVStreams(
+                self.network_group, self.input_vparams, self.output_vparams
+            ) as pipeline:
+                with self.network_group.activate(self.ng_params):
+                    return pipeline.infer(data)
 
 
 # ── SCRFD 탐지 ─────────────────────────────────────────────────────────────
