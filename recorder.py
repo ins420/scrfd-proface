@@ -125,17 +125,34 @@ class PSFRecorder:
     def _loop(self):
         frame_id = 0
         last_chunk = None
+        save_count = 0
+        t_report = time.time()
+        proc_ms = 0.0
         while self._running:
-            time.sleep(self._interval)
+            if self._interval > 0:
+                time.sleep(self._interval)
 
-            # 원본 프레임을 가져와 이 순간만 INN 보호본 생성 (무거운 처리, N초에 1번)
+            # 원본 프레임을 가져와 INN 보호본 생성 (무거운 처리)
             raw = self._camera.capture_raw_frame()
             if raw is None:
+                time.sleep(0.05)
                 continue
+            _t0 = time.time()
             anon_frame, tiles = self._camera.make_protected(raw)
+            proc_ms = (time.time() - _t0) * 1000
+
+            # 실제 저장 속도 주기적 로그 (RESTORE_VIDEO_FPS 맞추는 기준)
+            if time.time() - t_report >= 5.0:
+                fps = save_count / (time.time() - t_report)
+                print(f"[Recorder] 저장 {fps:.1f}fps "
+                      f"(INN {proc_ms:.0f}ms/frame) → RESTORE_VIDEO_FPS≈{max(1, round(fps))}")
+                save_count = 0
+                t_report = time.time()
+
             # 익명화 대상 얼굴(보호본 타일)이 있을 때만 저장
             if not tiles:
                 continue
+            save_count += 1
 
             chunk = self._chunk_dir()
             # 청크(10분)가 바뀌면 프레임 번호 리셋

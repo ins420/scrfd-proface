@@ -132,8 +132,9 @@ VIDEO_FALLBACK_FPS = 25   # 재생 속도 (원본 영상 fps에 맞춤)
 # (이 PC 카메라가 검은 프레임만 줄 때 demo.mp4로 강제하는 용도)
 FORCE_VIDEO = False
 
-# PSF 녹화 간격(초). 작을수록 복원 영상이 부드럽지만 INN 부하/디스크 증가.
-RECORD_INTERVAL = 0.3
+# PSF 녹화 간격(초). 0이면 INN이 처리 가능한 최대 속도로 쉬지 않고 저장
+# (가장 부드럽지만 CPU 최대 사용). 실제 저장 fps는 로그로 확인.
+RECORD_INTERVAL = 0
 
 # 청크 길이(분). 10분 단위로 청크 폴더 생성.
 # 저장 계층: recordings/월/일/오전오후/시/10분청크
