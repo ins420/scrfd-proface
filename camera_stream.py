@@ -18,6 +18,7 @@ import config as c
 from core.anonymizer import INNAnonymizer
 
 DB_PATH = "security_system.db"
+PENDING_DIR = "pending"  # 원본 프레임 임시 큐 (INN 대기)
 
 _FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",  # Ubuntu
@@ -132,10 +133,13 @@ class CameraProcessor:
         self._tiles_lock = threading.Lock()
         self._latest_tiles: list = []   # [{"tile_f32": ndarray, "crop_box": list}]
 
-        # 카메라 루프가 detect한 결과를 큐에 쌓고 recorder가 순차 소비.
-        # (모든 프레임을 놓치지 않고 INN 저장; recorder가 뒤처져도 큐에 대기)
-        self._det_lock = threading.Lock()
-        self._frame_queue = deque(maxlen=getattr(c, "FRAME_QUEUE_MAX", 3000))
+        # 원본 프레임을 디스크 pending 큐에 저장 → recorder가 배치 INN 처리.
+        # (모든 프레임을 놓치지 않고 저장; 실시간을 안 따라가도 결국 다 처리)
+        self._pending_lock = threading.Lock()
+        self._pending_seq = 0
+        import shutil
+        shutil.rmtree(PENDING_DIR, ignore_errors=True)  # 이전 잔여 큐 정리
+        os.makedirs(PENDING_DIR, exist_ok=True)
 
         self._stats_lock = threading.Lock()
         self._stats = {"employee_count": 0, "unknown_count": 0, "recording": True}
@@ -293,7 +297,12 @@ class CameraProcessor:
         state = {"frame": None, "run": True, "first": True}
         rlock = threading.Lock()
 
+        # pending 저장 fps 상한 (PROCESS_MAX_FPS). 0이면 카메라 fps 전부.
+        save_fps = getattr(c, "PROCESS_MAX_FPS", 15)
+        save_dt = (1.0 / save_fps) if save_fps and save_fps > 0 else 0.0
+
         def _reader():
+            last_save = 0.0
             while state["run"] and self._running:
                 ret, f = cap.read()
                 if not ret or f is None:
@@ -305,7 +314,13 @@ class CameraProcessor:
                     with self._frame_lock:
                         self._latest_raw_jpeg = _bufr.tobytes()
                 with rlock:
-                    state["frame"] = f  # 이전 미처리 프레임은 덮어씀(드롭)
+                    state["frame"] = f  # 실시간 화면용 최신 프레임
+
+                # pending 큐에 원본 저장 (fps 상한, 모든 프레임 INN 대상)
+                now = time.time()
+                if save_dt == 0.0 or (now - last_save) >= save_dt:
+                    last_save = now
+                    self._save_pending(f, now)
 
         threading.Thread(target=_reader, daemon=True).start()
 
@@ -539,27 +554,17 @@ class CameraProcessor:
         return frame
 
     def _process(self, frame: np.ndarray) -> tuple[np.ndarray, int, int]:
-        """
-        실시간 디스플레이용 처리. 화면은 가벼운 모자이크로 익명화.
-        detect/recognize 결과와 원본 프레임을 캐시해 recorder가 재사용(중복 방지).
-        """
-        import time as _t
-        orig = frame.copy()  # INN 녹화용 원본 (모자이크/그리기 전)
+        """실시간 디스플레이 전용. 화면은 가벼운 모자이크로 익명화 (INN 안 씀)."""
         bboxes, kpss = self.detector.detect(frame, max_num=0, metric="default")
         if bboxes is None or len(bboxes) == 0:
-            # 얼굴이 없어도 프레임을 큐에 (모든 프레임 저장)
-            self._enqueue(orig, [], _t.time())
             return frame, 0, 0
 
-        realtime = getattr(c, "REALTIME_ANON", "inn")
         anonymize_all = getattr(c, "ANONYMIZE_ALL", False)
         emp, unk = 0, 0
-        faces = []
         for i in range(bboxes.shape[0]):
             x1, y1, x2, y2 = bboxes[i, :4].astype(int)
             lm = kpss[i]
-
-            aligned = face_align.norm_crop(orig, landmark=lm, image_size=112)
+            aligned = face_align.norm_crop(frame, landmark=lm, image_size=112)
             emb = self.recognizer.get_feat(aligned)
             name, group, sim = self._match(emb)
 
@@ -568,67 +573,93 @@ class CameraProcessor:
             else:
                 emp += 1
 
-            should_anon = (name == "Unknown" or anonymize_all)
-            # recorder가 재사용할 얼굴 정보 (detect 재실행 안 함)
-            faces.append({
-                "bbox": [x1, y1, x2, y2], "name": name,
-                "group": group, "sim": sim, "should_anon": should_anon,
-            })
-
-            if should_anon:
-                # 실시간 화면은 항상 가벼운 모자이크 (INN은 recorder가 담당)
+            if name == "Unknown" or anonymize_all:
                 frame = self._mosaic(frame, x1, y1, x2, y2)
             frame = self._draw(frame, x1, y1, x2, y2, name, group, sim)
-
-        # detect 결과 + 원본 + 시각을 큐에 → recorder가 순차 소비
-        self._enqueue(orig, faces, _t.time())
         return frame, emp, unk
 
-    def _enqueue(self, frame: np.ndarray, faces: list, ts: float):
-        """원본 프레임(JPEG 압축)+얼굴정보+시각을 큐에 추가 (메모리 절약)."""
-        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
-        if not ok:
-            return
-        with self._det_lock:
-            self._frame_queue.append(
-                {"jpeg": buf.tobytes(), "faces": faces, "ts": ts}
+    # ── pending 디스크 큐 (모든 원본 프레임 → recorder가 배치 INN) ──────────
+
+    def _save_pending(self, frame: np.ndarray, ts: float):
+        """원본 프레임 + 시각을 pending 폴더에 저장 (INN 대기 큐)."""
+        with self._pending_lock:
+            self._pending_seq += 1
+            seq = self._pending_seq
+        d = os.path.join(PENDING_DIR, f"{seq:09d}")
+        try:
+            os.makedirs(d, exist_ok=True)
+            cv2.imwrite(os.path.join(d, "frame.jpg"), frame)
+            with open(os.path.join(d, "ts.txt"), "w") as f:
+                f.write(repr(ts))
+            open(os.path.join(d, "ready"), "w").close()  # 쓰기 완료 표시
+        except Exception as e:
+            print(f"[Pending] 저장 실패: {e}")
+
+    def pop_pending(self):
+        """가장 오래된 완성 pending 항목의 (frame, ts) 반환 후 삭제. 없으면 None."""
+        import shutil
+        try:
+            items = sorted(
+                d for d in os.listdir(PENDING_DIR)
+                if os.path.exists(os.path.join(PENDING_DIR, d, "ready"))
             )
+        except FileNotFoundError:
+            return None
+        if not items:
+            return None
+        d = os.path.join(PENDING_DIR, items[0])
+        frame = cv2.imread(os.path.join(d, "frame.jpg"))
+        ts = 0.0
+        try:
+            with open(os.path.join(d, "ts.txt")) as f:
+                ts = float(f.read())
+        except Exception:
+            pass
+        shutil.rmtree(d, ignore_errors=True)
+        if frame is None:
+            return None
+        return frame, ts
 
-    def queue_size(self) -> int:
-        with self._det_lock:
-            return len(self._frame_queue)
+    def pending_size(self) -> int:
+        try:
+            return sum(
+                1 for d in os.listdir(PENDING_DIR)
+                if os.path.exists(os.path.join(PENDING_DIR, d, "ready"))
+            )
+        except FileNotFoundError:
+            return 0
 
-    def build_protected(self):
+    def make_protected(self, frame: np.ndarray) -> tuple[np.ndarray, list]:
         """
-        녹화 전용: 큐에서 프레임 하나를 꺼내 INN 보호본 생성.
-        detect/recognize를 다시 하지 않음(Hailo 중복 제거). recorder가 호출.
-        Returns: (보호본 프레임, tiles, ts) 또는 None(큐 비어있음)
-        얼굴이 없으면 tiles=[]이고 원본 그대로 저장(익명화할 것 없음).
+        원본 프레임을 detect + INN protect 해 보호본 생성 (recorder 배치용).
+        Returns: (보호본 프레임, tiles)  얼굴 없으면 (원본, [])
         """
-        with self._det_lock:
-            if not self._frame_queue:
-                return None
-            d = self._frame_queue.popleft()
-
-        frame = cv2.imdecode(np.frombuffer(d["jpeg"], np.uint8), cv2.IMREAD_COLOR)
-        ts = d.get("ts", 0.0)
+        bboxes, kpss = self.detector.detect(frame, max_num=0, metric="default")
+        if bboxes is None or len(bboxes) == 0:
+            return frame, []
+        anonymize_all = getattr(c, "ANONYMIZE_ALL", False)
+        out = frame
         tiles = []
-        for f in d["faces"]:
-            x1, y1, x2, y2 = f["bbox"]
-            if f["should_anon"]:
+        for i in range(bboxes.shape[0]):
+            x1, y1, x2, y2 = bboxes[i, :4].astype(int)
+            lm = kpss[i]
+            aligned = face_align.norm_crop(out, landmark=lm, image_size=112)
+            emb = self.recognizer.get_feat(aligned)
+            name, group, sim = self._match(emb)
+            if name == "Unknown" or anonymize_all:
                 if self._anonymizer is not None:
                     try:
-                        frame, tile_f32, crop_box = self._anonymizer.protect_roi(
-                            frame, [x1, y1, x2, y2], self._password
+                        out, tile_f32, crop_box = self._anonymizer.protect_roi(
+                            out, [x1, y1, x2, y2], self._password
                         )
                         tiles.append({"tile_f32": tile_f32, "crop_box": crop_box})
                     except Exception as e:
-                        print(f"[INN] build_protected 실패 → 모자이크: {e}")
-                        frame = self._mosaic(frame, x1, y1, x2, y2)
+                        print(f"[INN] make_protected 실패 → 모자이크: {e}")
+                        out = self._mosaic(out, x1, y1, x2, y2)
                 else:
-                    frame = self._mosaic(frame, x1, y1, x2, y2)
-            frame = self._draw(frame, x1, y1, x2, y2, f["name"], f["group"], f["sim"])
-        return frame, tiles, ts
+                    out = self._mosaic(out, x1, y1, x2, y2)
+            out = self._draw(out, x1, y1, x2, y2, name, group, sim)
+        return out, tiles
 
     def _match(self, emb) -> tuple[str, str, float]:
         best_name, best_group, best_sim = "Unknown", "비허가", -1.0

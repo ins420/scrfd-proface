@@ -132,21 +132,22 @@ class PSFRecorder:
             if self._interval > 0:
                 time.sleep(self._interval)
 
-            # 카메라가 캐시한 detect 결과를 재사용해 INN 보호본만 생성
-            # (detect/recognize 중복 제거 → Hailo 경쟁 없음)
-            _t0 = time.time()
-            result = self._camera.build_protected()
-            if result is None:
-                time.sleep(0.02)  # 아직 새 프레임 없음
+            # pending 디스크 큐에서 원본 하나를 꺼내 detect + INN 보호본 생성
+            # (실시간을 안 따라가도 큐에 쌓인 모든 프레임을 결국 다 처리)
+            popped = self._camera.pop_pending()
+            if popped is None:
+                time.sleep(0.05)  # 큐 비어있음
                 continue
-            anon_frame, tiles, ts = result
+            raw, ts = popped
+            _t0 = time.time()
+            anon_frame, tiles = self._camera.make_protected(raw)
             proc_ms = (time.time() - _t0) * 1000
             save_count += 1
 
             # 실제 저장 속도 + 대기 큐 크기 주기적 로그
             if time.time() - t_report >= 5.0:
                 fps = save_count / (time.time() - t_report)
-                qsize = self._camera.queue_size()
+                qsize = self._camera.pending_size()
                 print(f"[Recorder] 저장 {fps:.1f}fps (INN {proc_ms:.0f}ms/frame) "
                       f"대기 큐 {qsize}장")
                 save_count = 0

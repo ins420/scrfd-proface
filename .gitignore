@@ -31,8 +31,9 @@ test_restore_result.jpg
 # 영상 (대용량 — 코랩엔 직접 업로드)
 *.mp4
 
-# 녹화 청크
+# 녹화 청크 / 임시 큐
 recordings/
+pending/
 
 # 환경변수
 .env
