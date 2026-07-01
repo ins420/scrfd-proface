@@ -24,7 +24,7 @@ image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg", "libgl1", "libglib2.0-0")
     .pip_install(
-        "torch", "opencv-python-headless", "numpy",
+        "torch", "torchvision", "opencv-python-headless", "numpy",
         "pycryptodome", "fastapi[standard]", "python-multipart",
     )
     .add_local_dir(
