@@ -132,13 +132,14 @@ class PSFRecorder:
             if self._interval > 0:
                 time.sleep(self._interval)
 
-            # 원본 프레임을 가져와 INN 보호본 생성 (무거운 처리)
-            raw = self._camera.capture_raw_frame()
-            if raw is None:
-                time.sleep(0.05)
-                continue
+            # 카메라가 캐시한 detect 결과를 재사용해 INN 보호본만 생성
+            # (detect/recognize 중복 제거 → Hailo 경쟁 없음)
             _t0 = time.time()
-            anon_frame, tiles = self._camera.make_protected(raw)
+            result = self._camera.build_protected()
+            if result is None:
+                time.sleep(0.02)  # 아직 새 detection 없음
+                continue
+            anon_frame, tiles = result
             proc_ms = (time.time() - _t0) * 1000
 
             # 실제 저장 속도 주기적 로그 (RESTORE_VIDEO_FPS 맞추는 기준)
