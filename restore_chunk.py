@@ -33,11 +33,34 @@ def _load_json(path):
         return None
 
 
+def _is_chunk(path):
+    """path가 청크 폴더인지(숫자 하위폴더에 frame.jpg 존재) 확인."""
+    try:
+        subs = sorted(d for d in os.listdir(path) if d.isdigit())
+    except Exception:
+        return False
+    return bool(subs) and os.path.exists(os.path.join(path, subs[0], "frame.jpg"))
+
+
+def _find_chunk(path):
+    """path 자체가 청크가 아니면 하위를 재귀 탐색해 청크 폴더를 찾는다."""
+    if _is_chunk(path):
+        return path
+    for root, _dirs, _fs in os.walk(path):
+        if _is_chunk(root):
+            return root
+    return None
+
+
 def restore_chunk(chunk_path, password="forensic2026", out_path="restored.mp4",
                   out_fps=15):
-    if not os.path.isdir(chunk_path):
-        print(f"[Restore] 폴더 없음: {chunk_path}")
+    # 경로 안에서 실제 청크 폴더 자동 탐색 (압축 해제 최상위를 줘도 됨)
+    found = _find_chunk(chunk_path)
+    if found is None:
+        print(f"[Restore] 청크(frame.jpg 있는 숫자 폴더)를 찾지 못함: {chunk_path}")
         return None
+    chunk_path = found
+    print(f"[Restore] 청크 폴더: {chunk_path}")
     frame_dirs = sorted(d for d in os.listdir(chunk_path) if d.isdigit())
     if not frame_dirs:
         print("[Restore] 프레임이 없습니다.")
