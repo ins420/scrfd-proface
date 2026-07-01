@@ -150,6 +150,9 @@ CHUNK_MINUTES = 10
 # 복원 영상 출력 fps (부드러움용). 실제 영상 길이는 프레임 타임스탬프로 맞춰짐.
 RESTORE_VIDEO_FPS = 15
 
+# Modal 서버리스 GPU 복원 엔드포인트. None이면 GPU 복원 버튼 비활성.
+MODAL_RESTORE_URL = "https://yena07--securefacerx-restore-restore.modal.run"
+
 # ffmpeg 실행 파일 경로 (None이면 PATH에서 탐색).
 # 브라우저 호환 H.264 변환에 사용. winget 설치 시 PATH에 없을 수 있어 직접 지정.
 FFMPEG_PATH = r"C:\Users\HOSEO\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin\ffmpeg.exe"

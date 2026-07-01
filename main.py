@@ -393,6 +393,47 @@ async def api_restore_video(req: RestoreVideoRequest):
     return FileResponse(path, media_type="video/mp4", filename="restored.mp4")
 
 
+# ── API — Modal GPU 복원 (청크를 Modal로 보내 GPU에서 복원) ────────────────
+def _gpu_restore_blocking(chunk_id: str) -> bytes | None:
+    """청크 폴더를 tar로 묶어 Modal 엔드포인트에 보내고 mp4 bytes를 받는다."""
+    import io
+    import tarfile
+    import requests
+    from recorder import _id_to_path
+
+    url = getattr(c, "MODAL_RESTORE_URL", None)
+    if not url:
+        return None
+    chunk_path = _id_to_path(chunk_id)
+    if not os.path.isdir(chunk_path):
+        return None
+
+    # 청크 폴더를 메모리 tar.gz로 압축
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        tar.add(chunk_path, arcname=os.path.basename(chunk_path))
+    buf.seek(0)
+
+    resp = requests.post(
+        url, files={"file": ("chunk.tar.gz", buf, "application/gzip")},
+        timeout=1800,
+    )
+    if resp.status_code != 200:
+        print(f"[GPU복원] Modal 오류 {resp.status_code}: {resp.text[:200]}")
+        return None
+    return resp.content
+
+
+@app.post("/api/restore_video_gpu")
+async def api_restore_video_gpu(req: RestoreVideoRequest):
+    if not getattr(c, "MODAL_RESTORE_URL", None):
+        raise HTTPException(status_code=503, detail="MODAL_RESTORE_URL 미설정")
+    data = await asyncio.to_thread(_gpu_restore_blocking, req.chunk_id)
+    if data is None:
+        raise HTTPException(status_code=500, detail="GPU 복원 실패")
+    return Response(content=data, media_type="video/mp4")
+
+
 # ── 직접 실행 ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn

@@ -370,7 +370,11 @@
           <div class="detail-title">${d.chunk_id}</div>
           <div class="detail-sub">시작: ${d.start_time ?? '알 수 없음'} · 마지막 업데이트: ${d.last_update ?? '-'}</div>
         </div>
-        ${hasFaces ? `<button class="btn btn-primary" onclick="openVideoModal('${d.chunk_id}')">🔓 복원하기</button>` : ''}
+        ${hasFaces ? `
+          <div style="display:flex; gap:8px;">
+            <button class="btn btn-ghost" onclick="openVideoModal('${d.chunk_id}')">🔓 복원(로컬)</button>
+            <button class="btn btn-primary" onclick="openGpuModal('${d.chunk_id}')">🚀 GPU 복원</button>
+          </div>` : ''}
       </div>
       <div class="info-chips">
         <span class="chip chip-blue">${d.frame_count ?? 0} 프레임</span>
@@ -386,18 +390,22 @@
       </div>
     `;
     document.getElementById('detailPanel').innerHTML = html;
-
-    // 얼굴이 있는 청크면 클릭 즉시 복원 인증 모달 표시
-    if (hasFaces) openVideoModal(d.chunk_id);
   }
 
   let restoreMode = 'video';
 
-  // ── 영상으로 복원 모달 ──
+  // ── 로컬(라즈베리파이 CPU) 복원 모달 ──
   function openVideoModal(chunkId) {
     selectedChunk = chunkId;
     restoreMode = 'video';
-    openModal('이 청크를 영상으로');
+    openModal('이 청크를 영상으로 (로컬 CPU)');
+  }
+
+  // ── GPU(Modal) 복원 모달 ──
+  function openGpuModal(chunkId) {
+    selectedChunk = chunkId;
+    restoreMode = 'gpu';
+    openModal('이 청크를 GPU로 복원 (빠름)');
   }
 
   // ── 비밀번호 모달 ──
@@ -421,11 +429,14 @@
     const btn = document.getElementById('restoreBtn');
     const txt = document.getElementById('restoreBtnText');
     btn.disabled = true;
-    txt.innerHTML = '<span class="spinner"></span> 복원 중...';
+    const label = restoreMode === 'gpu' ? 'GPU 복원 중...' : '복원 중...';
+    txt.innerHTML = `<span class="spinner"></span> ${label}`;
     document.getElementById('modalError').style.display = 'none';
 
+    const endpoint = restoreMode === 'gpu'
+      ? '/api/restore_video_gpu' : '/api/restore_video';
     try {
-      const res = await fetch('/api/restore_video', {
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({chunk_id: selectedChunk, password: pw}),
