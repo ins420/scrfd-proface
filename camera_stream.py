@@ -309,8 +309,11 @@ class CameraProcessor:
 
         threading.Thread(target=_reader, daemon=True).start()
 
-        every_n = max(1, getattr(c, "PROCESS_EVERY_N", 1))
-        frame_count = 0
+        # 처리 fps 상한(시간 기반) — 카메라 버퍼 폭주로 초당 수십 장을
+        # 저장/처리하는 것을 방지. 화면·저장·큐를 이 fps로 안정화.
+        max_fps = getattr(c, "PROCESS_MAX_FPS", 15)
+        min_dt = (1.0 / max_fps) if max_fps and max_fps > 0 else 0.0
+        last_proc = 0.0
         while self._running:
             with rlock:
                 frame = state["frame"]
@@ -323,9 +326,12 @@ class CameraProcessor:
                 state["first"] = False
                 print(f"[Camera] 첫 프레임 수신 {frame.shape}")
 
-            frame_count += 1
-            if frame_count % every_n != 0:
+            # fps 상한: 너무 빠르면 이 프레임은 버리고 최신만 처리
+            now = time.time()
+            if min_dt > 0 and (now - last_proc) < min_dt:
+                time.sleep(0.002)
                 continue
+            last_proc = now
 
             frame = self._maybe_downscale(frame)
             try:
