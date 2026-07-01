@@ -204,6 +204,22 @@ class PSFRecorder:
         _save_json(mpath, m)
         print(f"[Recorder] 청크 완료: {_path_to_id(chunk_path)}")
 
+    @staticmethod
+    def _chunk_past(chunk_id: str) -> bool:
+        """청크의 10분 시간대가 이미 지났는지 (지났으면 완료로 간주, 재시작 견고)."""
+        import config as c
+        from datetime import timedelta
+        try:
+            parts = chunk_id.split("__")
+            year, month = (int(x) for x in parts[0].split("-"))
+            day = int(parts[1])
+            hh, mm = (int(x) for x in parts[4].split("-"))
+            start = datetime(year, month, day, hh, mm)
+            end = start + timedelta(minutes=getattr(c, "CHUNK_MINUTES", 10))
+            return datetime.now() > end
+        except Exception:
+            return False
+
     # ── 공개 API ──────────────────────────────────────────────────────────
 
     def list_chunks(self) -> list[dict]:
@@ -215,9 +231,10 @@ class PSFRecorder:
             if "manifest.json" not in files:
                 continue
             m = _load_json(os.path.join(root, "manifest.json")) or {}
-            m["chunk_id"] = _path_to_id(root)
+            cid = _path_to_id(root)
+            m["chunk_id"] = cid
             m["has_thumb"] = _first_frame_jpg(root) is not None
-            m["complete"] = m.get("complete", False)
+            m["complete"] = m.get("complete", False) or self._chunk_past(cid)
             result.append(m)
         result.sort(key=lambda x: x.get("chunk_id", ""), reverse=True)
         return result
@@ -229,7 +246,7 @@ class PSFRecorder:
             return None
         m = _load_json(mpath) or {}
         m["chunk_id"] = chunk_id
-        m["complete"] = m.get("complete", False)
+        m["complete"] = m.get("complete", False) or self._chunk_past(chunk_id)
         frames = []
         if os.path.isdir(path):
             for fname in sorted(os.listdir(path)):
