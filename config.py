@@ -99,9 +99,13 @@ ANONYMIZE_ALL = True
 # 어느 쪽이든 녹화/복원은 INN으로 동작 → 복원하면 원본이 나옴.
 REALTIME_ANON = "mosaic"
 
-# N프레임마다 1번만 탐지/인식/익명화 처리 (라즈베리파이 등 저사양 가속).
-# 1=매 프레임(느림), 3~5=빠름. 클수록 부드럽지만 반응이 둔해짐.
-PROCESS_EVERY_N = 3
+# N프레임마다 1번만 탐지/인식 처리. 1=모든 프레임(가장 부드럽지만 무거움).
+# 모든 프레임을 저장/복원하려면 1 권장(카메라 프레임 전부 큐에 쌓임).
+PROCESS_EVERY_N = 1
+
+# recorder가 뒤처질 때 원본 프레임을 쌓아두는 큐 최대 크기(장).
+# 클수록 프레임을 덜 버리지만 메모리↑ (JPEG 압축 저장, 장당 ~50KB).
+FRAME_QUEUE_MAX = 3000
 
 # 처리 전 프레임 가로 해상도 축소(px). 0이면 원본. 탐지 속도↑.
 PROCESS_WIDTH = 0
@@ -140,8 +144,8 @@ RECORD_INTERVAL = 0
 # 저장 계층: recordings/월/일/오전오후/시/10분청크
 CHUNK_MINUTES = 10
 
-# 복원 영상 재생 fps (RECORD_INTERVAL과 맞추면 실제 속도로 재생)
-RESTORE_VIDEO_FPS = 3
+# 복원 영상 출력 fps (부드러움용). 실제 영상 길이는 프레임 타임스탬프로 맞춰짐.
+RESTORE_VIDEO_FPS = 15
 
 # ffmpeg 실행 파일 경로 (None이면 PATH에서 탐색).
 # 브라우저 호환 H.264 변환에 사용. winget 설치 시 PATH에 없을 수 있어 직접 지정.

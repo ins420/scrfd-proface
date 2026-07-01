@@ -6,6 +6,7 @@ import io
 import os
 import threading
 import sqlite3
+from collections import deque
 
 import cv2
 import numpy as np
@@ -131,9 +132,10 @@ class CameraProcessor:
         self._tiles_lock = threading.Lock()
         self._latest_tiles: list = []   # [{"tile_f32": ndarray, "crop_box": list}]
 
-        # 카메라 루프가 detect한 결과를 recorder가 재사용(중복 Hailo 방지)
+        # 카메라 루프가 detect한 결과를 큐에 쌓고 recorder가 순차 소비.
+        # (모든 프레임을 놓치지 않고 INN 저장; recorder가 뒤처져도 큐에 대기)
         self._det_lock = threading.Lock()
-        self._latest_detection: dict | None = None  # {"frame": ndarray, "faces": [...]}
+        self._frame_queue = deque(maxlen=getattr(c, "FRAME_QUEUE_MAX", 3000))
 
         self._stats_lock = threading.Lock()
         self._stats = {"employee_count": 0, "unknown_count": 0, "recording": True}
@@ -535,11 +537,12 @@ class CameraProcessor:
         실시간 디스플레이용 처리. 화면은 가벼운 모자이크로 익명화.
         detect/recognize 결과와 원본 프레임을 캐시해 recorder가 재사용(중복 방지).
         """
+        import time as _t
         orig = frame.copy()  # INN 녹화용 원본 (모자이크/그리기 전)
         bboxes, kpss = self.detector.detect(frame, max_num=0, metric="default")
         if bboxes is None or len(bboxes) == 0:
-            with self._det_lock:
-                self._latest_detection = None
+            # 얼굴이 없어도 프레임을 큐에 (모든 프레임 저장)
+            self._enqueue(orig, [], _t.time())
             return frame, 0, 0
 
         realtime = getattr(c, "REALTIME_ANON", "inn")
@@ -571,24 +574,38 @@ class CameraProcessor:
                 frame = self._mosaic(frame, x1, y1, x2, y2)
             frame = self._draw(frame, x1, y1, x2, y2, name, group, sim)
 
-        # detect 결과 + 원본 캐시 → recorder가 INN만 돌려 저장
-        with self._det_lock:
-            self._latest_detection = {"frame": orig, "faces": faces}
+        # detect 결과 + 원본 + 시각을 큐에 → recorder가 순차 소비
+        self._enqueue(orig, faces, _t.time())
         return frame, emp, unk
 
-    def build_protected(self) -> tuple[np.ndarray, list] | None:
+    def _enqueue(self, frame: np.ndarray, faces: list, ts: float):
+        """원본 프레임(JPEG 압축)+얼굴정보+시각을 큐에 추가 (메모리 절약)."""
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        if not ok:
+            return
+        with self._det_lock:
+            self._frame_queue.append(
+                {"jpeg": buf.tobytes(), "faces": faces, "ts": ts}
+            )
+
+    def queue_size(self) -> int:
+        with self._det_lock:
+            return len(self._frame_queue)
+
+    def build_protected(self):
         """
-        녹화 전용: 카메라가 캐시한 detect 결과를 재사용해 INN 보호본만 생성.
+        녹화 전용: 큐에서 프레임 하나를 꺼내 INN 보호본 생성.
         detect/recognize를 다시 하지 않음(Hailo 중복 제거). recorder가 호출.
-        Returns: (보호본 프레임, tiles) 또는 None(새 detection 없음)
+        Returns: (보호본 프레임, tiles, ts) 또는 None(큐 비어있음)
+        얼굴이 없으면 tiles=[]이고 원본 그대로 저장(익명화할 것 없음).
         """
         with self._det_lock:
-            d = self._latest_detection
-            self._latest_detection = None  # 소비 → 다음 _process 결과까지 대기
-        if d is None:
-            return None
+            if not self._frame_queue:
+                return None
+            d = self._frame_queue.popleft()
 
-        frame = d["frame"].copy()
+        frame = cv2.imdecode(np.frombuffer(d["jpeg"], np.uint8), cv2.IMREAD_COLOR)
+        ts = d.get("ts", 0.0)
         tiles = []
         for f in d["faces"]:
             x1, y1, x2, y2 = f["bbox"]
@@ -605,7 +622,7 @@ class CameraProcessor:
                 else:
                     frame = self._mosaic(frame, x1, y1, x2, y2)
             frame = self._draw(frame, x1, y1, x2, y2, f["name"], f["group"], f["sim"])
-        return frame, tiles
+        return frame, tiles, ts
 
     def _match(self, emb) -> tuple[str, str, float]:
         best_name, best_group, best_sim = "Unknown", "비허가", -1.0

@@ -137,24 +137,22 @@ class PSFRecorder:
             _t0 = time.time()
             result = self._camera.build_protected()
             if result is None:
-                time.sleep(0.02)  # 아직 새 detection 없음
+                time.sleep(0.02)  # 아직 새 프레임 없음
                 continue
-            anon_frame, tiles = result
+            anon_frame, tiles, ts = result
             proc_ms = (time.time() - _t0) * 1000
+            save_count += 1
 
-            # 실제 저장 속도 주기적 로그 (RESTORE_VIDEO_FPS 맞추는 기준)
+            # 실제 저장 속도 + 대기 큐 크기 주기적 로그
             if time.time() - t_report >= 5.0:
                 fps = save_count / (time.time() - t_report)
-                print(f"[Recorder] 저장 {fps:.1f}fps "
-                      f"(INN {proc_ms:.0f}ms/frame) → RESTORE_VIDEO_FPS≈{max(1, round(fps))}")
+                qsize = self._camera.queue_size()
+                print(f"[Recorder] 저장 {fps:.1f}fps (INN {proc_ms:.0f}ms/frame) "
+                      f"대기 큐 {qsize}장")
                 save_count = 0
                 t_report = time.time()
 
-            # 익명화 대상 얼굴(보호본 타일)이 있을 때만 저장
-            if not tiles:
-                continue
-            save_count += 1
-
+            # 모든 프레임 저장 (얼굴 없으면 tiles=[]이고 원본 그대로)
             chunk = self._chunk_dir()
             # 청크(10분)가 바뀌면 프레임 번호 리셋
             if chunk != last_chunk:
@@ -164,9 +162,12 @@ class PSFRecorder:
             snap_dir = os.path.join(chunk, f"{frame_id:06d}")
             os.makedirs(snap_dir, exist_ok=True)
 
-            # frame.jpg = INN 보호본 프레임
+            # frame.jpg = INN 보호본 프레임 (얼굴 없으면 원본)
             frame_path = os.path.join(snap_dir, "frame.jpg")
             cv2.imwrite(frame_path, anon_frame)
+
+            # 프레임 촬영 시각 기록 (실제 시간 길이 복원용)
+            _save_json(os.path.join(snap_dir, "meta.json"), {"ts": ts})
 
             # 타일 저장
             for i, td in enumerate(tiles):
@@ -262,12 +263,19 @@ class PSFRecorder:
         if c.INN_CHECKPOINT is not None:
             anon = INNAnonymizer(checkpoint_path=c.INN_CHECKPOINT)
 
-        fps = getattr(c, "RESTORE_VIDEO_FPS", 5)
+        # 출력 재생 fps (부드러움용). 실제 시간 길이는 타임스탬프로 맞춤.
+        out_fps = max(1, getattr(c, "RESTORE_VIDEO_FPS", 10))
         raw_path = os.path.join(path, "restored_raw.mp4")  # mp4v (브라우저 비호환)
         out_path = os.path.join(path, "restored.mp4")       # H.264 (브라우저 호환)
         writer = None
 
+        # 각 프레임의 촬영 시각(ts) 수집 → 프레임 간 실제 간격 계산
+        ts_list = []
         for fid in frame_dirs:
+            meta = _load_json(os.path.join(path, fid, "meta.json"))
+            ts_list.append(meta.get("ts", 0.0) if meta else 0.0)
+
+        for idx, fid in enumerate(frame_dirs):
             snap = os.path.join(path, fid)
             frame = cv2.imread(os.path.join(snap, "frame.jpg"))
             if frame is None:
@@ -292,9 +300,17 @@ class PSFRecorder:
             if writer is None:
                 h, w = frame.shape[:2]
                 writer = cv2.VideoWriter(
-                    raw_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)
+                    raw_path, cv2.VideoWriter_fourcc(*"mp4v"), out_fps, (w, h)
                 )
-            writer.write(frame)
+
+            # 실제 시간 반영: 다음 프레임까지의 간격만큼 이 화면을 유지(hold)
+            if idx < len(frame_dirs) - 1 and ts_list[idx] > 0 and ts_list[idx + 1] > 0:
+                dur = ts_list[idx + 1] - ts_list[idx]
+            else:
+                dur = 1.0 / out_fps
+            hold = max(1, min(round(dur * out_fps), out_fps * 30))  # 최대 30초/프레임
+            for _ in range(hold):
+                writer.write(frame)
 
         if writer is None:
             return None
