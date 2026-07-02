@@ -99,9 +99,12 @@ ANONYMIZE_ALL = True
 # 어느 쪽이든 녹화/복원은 INN으로 동작 → 복원하면 원본이 나옴.
 REALTIME_ANON = "mosaic"
 
-# 처리·저장 fps 상한(초당 장수). 카메라 버퍼 폭주 방지 + 화면 안정화.
-# 이 값이 실제 저장 fps이자 복원 영상 부드러움의 기준. 12~15 권장.
-PROCESS_MAX_FPS = 15
+# 처리·저장 fps 상한(초당 장수).
+# INN protect가 라즈베리파이 CPU에서 ~2.3초/프레임(=0.4fps)이라, 이보다
+# 크게 잡으면 pending 큐가 쌓여 청크가 완성되지 않는다. INN 속도에 맞춰
+# 낮게(1 이하) 두어야 실시간에 근접해 청크가 제때 완성된다. 대신 복원
+# 영상은 이 fps만큼만 촘촘(낮으면 뚝뚝).
+PROCESS_MAX_FPS = 1
 
 # (구) 프레임 스킵. 시간 기반 PROCESS_MAX_FPS를 쓰므로 1로 둠.
 PROCESS_EVERY_N = 1
@@ -143,9 +146,9 @@ FORCE_VIDEO = False
 # (가장 부드럽지만 CPU 최대 사용). 실제 저장 fps는 로그로 확인.
 RECORD_INTERVAL = 0
 
-# 청크 길이(분). 10분 단위로 청크 폴더 생성.
-# 저장 계층: recordings/월/일/오전오후/시/10분청크
-CHUNK_MINUTES = 10
+# 청크 길이(분). INN이 느려 완성에 시간이 걸리므로 데모는 1분 권장.
+# 저장 계층: recordings/월/일/오전오후/시/N분청크
+CHUNK_MINUTES = 1
 
 # 복원 영상 출력 fps (부드러움용). 실제 영상 길이는 프레임 타임스탬프로 맞춰짐.
 RESTORE_VIDEO_FPS = 15
