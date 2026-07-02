@@ -143,9 +143,9 @@ class CameraProcessor:
         os.makedirs(PENDING_DIR, exist_ok=True)
         # 대기 큐 상한 = 한 청크분(10분치). 넘으면 새 녹화를 일시 중단하고
         # recorder가 소진(청크 완성)할 때까지 기다림 → pending 폭발 방지.
-        self._pending_max = (
-            getattr(c, "CHUNK_MINUTES", 10) * 60 * getattr(c, "SAVE_FPS", 1)
-        )
+        self._pending_max = int(
+            getattr(c, "CHUNK_SECONDS", 60) * getattr(c, "SAVE_FPS", 1)
+        ) or 1
 
         self._stats_lock = threading.Lock()
         self._stats = {"employee_count": 0, "unknown_count": 0, "recording": True}

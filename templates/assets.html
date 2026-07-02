@@ -283,15 +283,13 @@
     }
   }
 
-  // "14-00" → "14:00 ~ 14:10"
+  // "14-00-20" → "14:00:20" (청크 시작 시각)
   function chunkTimeLabel(key) {
     const p = key.split('-');
-    if (p.length !== 2) return key;
-    const h = parseInt(p[0]), m = parseInt(p[1]);
-    let eh = h, em = m + 10;
-    if (em >= 60) { em -= 60; eh += 1; }
-    const pad = n => n.toString().padStart(2, '0');
-    return `${pad(h)}:${pad(m)} ~ ${pad(eh)}:${pad(em)}`;
+    const pad = n => (parseInt(n) || 0).toString().padStart(2, '0');
+    if (p.length >= 3) return `${pad(p[0])}:${pad(p[1])}:${pad(p[2])}`;
+    if (p.length === 2) return `${pad(p[0])}:${pad(p[1])}`;
+    return key;
   }
 
   function renderChunkList() {

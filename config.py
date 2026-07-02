@@ -102,10 +102,10 @@ REALTIME_ANON = "mosaic"
 # 실시간 화면(모자이크 표시) 갱신 fps 상한. 높을수록 화면이 부드러움.
 PROCESS_MAX_FPS = 15
 
-# pending 저장 fps (INN 보호본 대상). INN protect가 ~2.3초/프레임(0.4fps)
-# 이라 이보다 크게 잡으면 큐가 쌓여 청크가 완성 안 됨. 1 이하 권장.
-# 복원 영상은 이 fps만큼만 촘촘.
-SAVE_FPS = 1
+# pending 저장 fps (INN 보호본 대상). 복원 영상 부드러움의 기준.
+# 짧은 청크(20초)면 5fps여도 완성이 수 분이라 감당 가능. 높일수록 부드럽지만
+# 청크 완성이 느려짐(INN 0.4fps 처리라 큐가 쌓임).
+SAVE_FPS = 5
 
 # (구) 프레임 스킵. 시간 기반 PROCESS_MAX_FPS를 쓰므로 1로 둠.
 PROCESS_EVERY_N = 1
@@ -147,9 +147,9 @@ FORCE_VIDEO = False
 # (가장 부드럽지만 CPU 최대 사용). 실제 저장 fps는 로그로 확인.
 RECORD_INTERVAL = 0
 
-# 청크 길이(분). INN이 느려 완성에 시간이 걸리므로 데모는 1분 권장.
-# 저장 계층: recordings/월/일/오전오후/시/N분청크
-CHUNK_MINUTES = 1
+# 청크 길이(초). 짧을수록 완성이 빨라 데모에 유리. 20초 권장.
+# 저장 계층: recordings/월/일/오전오후/시/HH-MM-SS 청크
+CHUNK_SECONDS = 20
 
 # 복원 영상 출력 fps (부드러움용). 실제 영상 길이는 프레임 타임스탬프로 맞춰짐.
 RESTORE_VIDEO_FPS = 15

@@ -109,19 +109,21 @@ class PSFRecorder:
 
     def _chunk_dir(self, ts: float | None = None) -> str:
         """
-        월/일/오전오후/시/10분청크 계층 폴더 경로를 만들고 반환.
+        월/일/오전오후/시/HH-MM-SS 청크 계층 폴더 경로를 만들고 반환.
         ts(촬영 시각)를 주면 그 시각 기준으로 청크를 분류 (recorder가
         뒤처져 나중에 처리해도 프레임이 올바른 시간대 청크에 저장됨).
         """
         import config as c
-        mins = getattr(c, "CHUNK_MINUTES", 10)
+        secs = getattr(c, "CHUNK_SECONDS", 60)
         now = datetime.fromtimestamp(ts) if ts else datetime.now()
         month = now.strftime("%Y-%m")            # 2026-06
         day = now.strftime("%d")                 # 29
         ampm = "오전" if now.hour < 12 else "오후"
         hour = f"{now.hour:02d}시"               # 14시
-        bucket = (now.minute // mins) * mins     # 10분 단위 내림
-        chunk = f"{now.hour:02d}-{bucket:02d}"   # 14-00
+        # 시(hour) 내 초 단위 버킷 → HH-MM-SS
+        sec_of_hour = now.minute * 60 + now.second
+        b = (sec_of_hour // secs) * secs
+        chunk = f"{now.hour:02d}-{b // 60:02d}-{b % 60:02d}"  # 14-00-20
         path = os.path.join(RECORDINGS_DIR, month, day, ampm, hour, chunk)
         os.makedirs(path, exist_ok=True)
         return path
@@ -209,9 +211,10 @@ class PSFRecorder:
             parts = chunk_id.split("__")
             year, month = (int(x) for x in parts[0].split("-"))
             day = int(parts[1])
-            hh, mm = (int(x) for x in parts[4].split("-"))
-            start = datetime(year, month, day, hh, mm)
-            end = start + timedelta(minutes=getattr(c, "CHUNK_MINUTES", 10))
+            hms = parts[4].split("-")   # "14-00-20"
+            hh = int(hms[0]); mm = int(hms[1]); ss = int(hms[2]) if len(hms) > 2 else 0
+            start = datetime(year, month, day, hh, mm, ss)
+            end = start + timedelta(seconds=getattr(c, "CHUNK_SECONDS", 60))
             return end.timestamp()
         except Exception:
             return None
