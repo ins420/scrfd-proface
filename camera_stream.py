@@ -137,9 +137,15 @@ class CameraProcessor:
         # (모든 프레임을 놓치지 않고 저장; 실시간을 안 따라가도 결국 다 처리)
         self._pending_lock = threading.Lock()
         self._pending_seq = 0
+        self._pending_count = 0
         import shutil
         shutil.rmtree(PENDING_DIR, ignore_errors=True)  # 이전 잔여 큐 정리
         os.makedirs(PENDING_DIR, exist_ok=True)
+        # 대기 큐 상한 = 한 청크분(10분치). 넘으면 새 녹화를 일시 중단하고
+        # recorder가 소진(청크 완성)할 때까지 기다림 → pending 폭발 방지.
+        self._pending_max = (
+            getattr(c, "CHUNK_MINUTES", 10) * 60 * getattr(c, "PROCESS_MAX_FPS", 15)
+        )
 
         self._stats_lock = threading.Lock()
         self._stats = {"employee_count": 0, "unknown_count": 0, "recording": True}
@@ -316,9 +322,11 @@ class CameraProcessor:
                 with rlock:
                     state["frame"] = f  # 실시간 화면용 최신 프레임
 
-                # pending 큐에 원본 저장 (fps 상한, 모든 프레임 INN 대상)
+                # pending 큐에 원본 저장 (fps 상한). 단, 큐가 한 청크분 이상
+                # 쌓이면 저장 중단 → recorder가 소진(청크 완성)할 때까지 대기.
                 now = time.time()
-                if save_dt == 0.0 or (now - last_save) >= save_dt:
+                if (save_dt == 0.0 or (now - last_save) >= save_dt) \
+                        and self._pending_count < self._pending_max:
                     last_save = now
                     self._save_pending(f, now)
 
@@ -584,6 +592,7 @@ class CameraProcessor:
         """원본 프레임 + 시각을 pending 폴더에 저장 (INN 대기 큐)."""
         with self._pending_lock:
             self._pending_seq += 1
+            self._pending_count += 1
             seq = self._pending_seq
         d = os.path.join(PENDING_DIR, f"{seq:09d}")
         try:
@@ -616,6 +625,8 @@ class CameraProcessor:
         except Exception:
             pass
         shutil.rmtree(d, ignore_errors=True)
+        with self._pending_lock:
+            self._pending_count = max(0, self._pending_count - 1)
         if frame is None:
             return None
         return frame, ts
