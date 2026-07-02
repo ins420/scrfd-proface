@@ -629,6 +629,23 @@ class CameraProcessor:
         except FileNotFoundError:
             return 0
 
+    def oldest_pending_ts(self) -> float | None:
+        """아직 처리 안 된 가장 오래된 대기 프레임의 촬영 시각. 큐 비면 None."""
+        try:
+            items = sorted(
+                d for d in os.listdir(PENDING_DIR)
+                if os.path.exists(os.path.join(PENDING_DIR, d, "ready"))
+            )
+        except FileNotFoundError:
+            return None
+        if not items:
+            return None
+        try:
+            with open(os.path.join(PENDING_DIR, items[0], "ts.txt")) as f:
+                return float(f.read())
+        except Exception:
+            return None
+
     def make_protected(self, frame: np.ndarray) -> tuple[np.ndarray, list]:
         """
         원본 프레임을 detect + INN protect 해 보호본 생성 (recorder 배치용).
