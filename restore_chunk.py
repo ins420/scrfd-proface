@@ -91,12 +91,14 @@ def restore_chunk(chunk_path, password="forensic2026", out_path="restored.mp4",
             box = os.path.join(snap, f"face_{i}_box.json")
             if not os.path.exists(npy):
                 break
-            tile = np.load(npy)
-            crop = _load_json(box)
             try:
+                tile = np.load(npy)  # 깨진 파일이면 여기서 예외
+                crop = _load_json(box)
                 frame = anon.restore_roi(frame, tile, crop, password)
             except Exception as e:
-                print(f"[Restore] {fid} face_{i} 실패: {e}")
+                # 손상된 프레임 하나 때문에 전체가 죽지 않도록 건너뜀
+                print(f"[Restore] {fid} face_{i} 건너뜀: {e}")
+                continue
 
         if writer is None:
             h, w = frame.shape[:2]

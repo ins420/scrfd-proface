@@ -167,21 +167,17 @@ class PSFRecorder:
                 last_chunk = chunk
             frame_id += 1
             snap_dir = os.path.join(chunk, f"{frame_id:06d}")
-            os.makedirs(snap_dir, exist_ok=True)
+            # 원자적 저장: 임시 폴더에 다 쓴 뒤 rename → 쓰기 도중 파일이
+            # tar 압축/복원에 잡혀 깨지는 것을 방지.
+            tmp_dir = snap_dir + ".tmp"
+            os.makedirs(tmp_dir, exist_ok=True)
 
-            # frame.jpg = INN 보호본 프레임 (얼굴 없으면 원본)
-            frame_path = os.path.join(snap_dir, "frame.jpg")
-            cv2.imwrite(frame_path, anon_frame)
-
-            # 프레임 촬영 시각 기록 (실제 시간 길이 복원용)
-            _save_json(os.path.join(snap_dir, "meta.json"), {"ts": ts})
-
-            # 타일 저장
+            cv2.imwrite(os.path.join(tmp_dir, "frame.jpg"), anon_frame)
+            _save_json(os.path.join(tmp_dir, "meta.json"), {"ts": ts})
             for i, td in enumerate(tiles):
-                npy_path = os.path.join(snap_dir, f"face_{i}.npy")
-                box_path = os.path.join(snap_dir, f"face_{i}_box.json")
-                np.save(npy_path, td["tile_f32"])
-                _save_json(box_path, td["crop_box"])
+                np.save(os.path.join(tmp_dir, f"face_{i}.npy"), td["tile_f32"])
+                _save_json(os.path.join(tmp_dir, f"face_{i}_box.json"), td["crop_box"])
+            os.replace(tmp_dir, snap_dir)  # 원자적 rename (완성된 폴더만 노출)
 
             # manifest 업데이트
             mpath = os.path.join(chunk, "manifest.json")
@@ -321,12 +317,13 @@ class PSFRecorder:
                     box_path = os.path.join(snap, f"face_{i}_box.json")
                     if not os.path.exists(npy_path):
                         break
-                    tile_f32 = np.load(npy_path)
-                    crop_box = _load_json(box_path)
                     try:
+                        tile_f32 = np.load(npy_path)  # 깨진 파일이면 예외
+                        crop_box = _load_json(box_path)
                         frame = anon.restore_roi(frame, tile_f32, crop_box, password)
                     except Exception as e:
-                        print(f"[RestoreVideo] {fid} face_{i} 실패: {e}")
+                        print(f"[RestoreVideo] {fid} face_{i} 건너뜀: {e}")
+                        continue
             else:
                 cv2.putText(frame, "INN checkpoint required", (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 200), 2)
