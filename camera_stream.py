@@ -144,7 +144,7 @@ class CameraProcessor:
         # 대기 큐 상한 = 한 청크분(10분치). 넘으면 새 녹화를 일시 중단하고
         # recorder가 소진(청크 완성)할 때까지 기다림 → pending 폭발 방지.
         self._pending_max = (
-            getattr(c, "CHUNK_MINUTES", 10) * 60 * getattr(c, "PROCESS_MAX_FPS", 15)
+            getattr(c, "CHUNK_MINUTES", 10) * 60 * getattr(c, "SAVE_FPS", 1)
         )
 
         self._stats_lock = threading.Lock()
@@ -303,8 +303,8 @@ class CameraProcessor:
         state = {"frame": None, "run": True, "first": True}
         rlock = threading.Lock()
 
-        # pending 저장 fps 상한 (PROCESS_MAX_FPS). 0이면 카메라 fps 전부.
-        save_fps = getattr(c, "PROCESS_MAX_FPS", 15)
+        # pending 저장 fps 상한 (SAVE_FPS, INN 속도에 맞춤). 화면 fps와 별개.
+        save_fps = getattr(c, "SAVE_FPS", 1)
         save_dt = (1.0 / save_fps) if save_fps and save_fps > 0 else 0.0
 
         def _reader():

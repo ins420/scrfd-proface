@@ -99,12 +99,13 @@ ANONYMIZE_ALL = True
 # 어느 쪽이든 녹화/복원은 INN으로 동작 → 복원하면 원본이 나옴.
 REALTIME_ANON = "mosaic"
 
-# 처리·저장 fps 상한(초당 장수).
-# INN protect가 라즈베리파이 CPU에서 ~2.3초/프레임(=0.4fps)이라, 이보다
-# 크게 잡으면 pending 큐가 쌓여 청크가 완성되지 않는다. INN 속도에 맞춰
-# 낮게(1 이하) 두어야 실시간에 근접해 청크가 제때 완성된다. 대신 복원
-# 영상은 이 fps만큼만 촘촘(낮으면 뚝뚝).
-PROCESS_MAX_FPS = 1
+# 실시간 화면(모자이크 표시) 갱신 fps 상한. 높을수록 화면이 부드러움.
+PROCESS_MAX_FPS = 15
+
+# pending 저장 fps (INN 보호본 대상). INN protect가 ~2.3초/프레임(0.4fps)
+# 이라 이보다 크게 잡으면 큐가 쌓여 청크가 완성 안 됨. 1 이하 권장.
+# 복원 영상은 이 fps만큼만 촘촘.
+SAVE_FPS = 1
 
 # (구) 프레임 스킵. 시간 기반 PROCESS_MAX_FPS를 쓰므로 1로 둠.
 PROCESS_EVERY_N = 1
